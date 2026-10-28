@@ -1,0 +1,17 @@
+agent: claude
+
+environment:
+  image: node:22
+  setup:
+    - npm install
+
+compute:
+  provider: aws
+  region: eu-west-1
+  instanceType: t3.large
+
+profiles:
+  fullstack:
+    repos:
+      - acme/web
+      - acme/api
