@@ -37,7 +37,8 @@ type Project struct {
 }
 
 type Options struct {
-	Profile string
+	Profile   string
+	Overrides []string
 }
 
 type source struct {
@@ -54,6 +55,11 @@ func Parse(data []byte, options Options) (Project, error) {
 	document, err := parseDocument(data)
 	if err != nil {
 		return Project{}, err
+	}
+	for _, assignment := range options.Overrides {
+		if err := applyOverride(document, assignment); err != nil {
+			return Project{}, err
+		}
 	}
 	encoded, err := json.Marshal(document)
 	if err != nil {
