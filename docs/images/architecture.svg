@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="960" viewBox="0 0 1440 960" role="img" aria-labelledby="title desc">
+<title id="title">Noma architecture</title>
+<desc id="desc">Admin and user CLIs connect to a central Noma server in Kubernetes on AWS. Each workspace has a supervisor, Claude Code and MCP tools, and persistent data. Users interact through Claude Remote Control. A browser bridge opens remote authentication requests locally.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#718096" stroke-width="1.5" stroke-linejoin="round"/></marker>
+  <marker id="orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#b96b43" stroke-width="1.5" stroke-linejoin="round"/></marker>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; }
+    .eyebrow { font-size:13px; font-weight:650; letter-spacing:2px; fill:#78838a; }
+    .title { font-size:23px; font-weight:650; fill:#24323b; letter-spacing:-.5px; }
+    .body { font-size:16px; fill:#64737d; }
+    .label { font-size:14px; fill:#64737d; }
+    .wire { fill:none; stroke:#82919b; stroke-width:1.8; marker-end:url(#arrow); stroke-linejoin:round; }
+    .bridge { fill:none; stroke:#a6afb6; stroke-width:1.6; stroke-dasharray:5 6; marker-start:url(#arrow); marker-end:url(#arrow); stroke-linejoin:round; }
+  </style>
+</defs>
+<rect width="1440" height="960" rx="24" fill="#fcfcfa"/>
+<text x="56" y="66" font-size="30" font-weight="720" fill="#25323a" letter-spacing="-1">noma</text>
+<text x="153" y="65" font-size="20" fill="#8a949b">/</text>
+<text x="178" y="65" font-size="20" fill="#64737d">Architecture</text>
+<text x="56" y="102" class="body">Your environment. Your agents. Running remotely.</text>
+
+<!-- Deployment boundaries -->
+<rect x="40" y="200" width="300" height="640" rx="20" fill="#f2f5f7" stroke="#e0e6e9"/>
+<text x="66" y="239" class="eyebrow">YOUR MACHINE</text>
+<rect x="390" y="200" width="1010" height="640" rx="20" fill="#f4f7f5" stroke="#dce6df"/>
+<text x="418" y="239" class="eyebrow">YOUR AWS ACCOUNT</text>
+<rect x="1188" y="218" width="183" height="28" rx="14" fill="#e7eeea"/>
+<text x="1279" y="237" text-anchor="middle" font-size="13" fill="#557564" font-weight="600">Kubernetes cluster</text>
+
+<!-- Native interaction surface -->
+<rect x="930" y="65" width="360" height="106" rx="15" fill="#fbf1e9" stroke="#e8cdbb"/>
+<circle cx="960" cy="96" r="5" fill="#c78259"/>
+<text x="978" y="101" font-size="13" font-weight="650" fill="#a06140" letter-spacing="1.4">WORK HERE</text>
+<text x="954" y="134" class="title">Claude website / mobile app</text>
+
+<!-- Local components -->
+<rect x="78" y="290" width="224" height="105" rx="13" fill="white" stroke="#d4dfe6"/>
+<text x="100" y="326" class="title">Admin CLI</text>
+<text x="100" y="353" class="body">Bootstrap infrastructure</text>
+<text x="100" y="376" class="body">Install and configure Noma</text>
+<rect x="78" y="440" width="224" height="105" rx="13" fill="white" stroke="#d4dfe6"/>
+<text x="100" y="476" class="title">User CLI</text>
+<text x="100" y="503" class="body">Create workspaces</text>
+<text x="100" y="526" class="body">Return connection details</text>
+<rect x="78" y="665" width="224" height="91" rx="13" fill="white" stroke="#d4dfe6"/>
+<text x="100" y="701" class="title">Local browser</text>
+<text x="100" y="731" class="body">Claude and MCP logins</text>
+
+<!-- Central control plane -->
+<rect x="450" y="400" width="300" height="180" rx="16" fill="white" stroke="#99b8aa" stroke-width="1.6"/>
+<rect x="470" y="420" width="93" height="23" rx="6" fill="#eaf2ed"/>
+<text x="516" y="436" text-anchor="middle" font-size="11" font-weight="700" fill="#567c68" letter-spacing="1">CENTRAL</text>
+<text x="474" y="479" font-size="28" font-weight="650" fill="#284a3b" letter-spacing="-.7">Noma server</text>
+<text x="474" y="513" class="body">User access and ownership</text>
+<text x="474" y="538" class="body">Provisioning and lifecycle</text>
+<text x="474" y="563" class="body">Credentials and workspace state</text>
+
+<!-- Per-task runtime -->
+<rect x="900" y="300" width="430" height="442" rx="17" fill="#edf0f7" stroke="#cbd2e4"/>
+<text x="926" y="335" class="eyebrow" style="fill:#7a7d98">ONE WORKSPACE / TASK</text>
+<rect x="940" y="380" width="350" height="100" rx="12" fill="white" stroke="#c9cfe0"/>
+<text x="962" y="418" class="title">Supervisor</text>
+<text x="962" y="448" class="body">Starts and monitors the agent</text>
+<rect x="940" y="520" width="350" height="91" rx="12" fill="white" stroke="#c9cfe0"/>
+<text x="962" y="557" class="title">Claude Code + MCP tools</text>
+<text x="962" y="586" class="body">Your captured agent setup</text>
+<rect x="940" y="650" width="350" height="66" rx="12" fill="#e3e8f2" stroke="#c9cfe0"/>
+<text x="962" y="678" font-size="17" font-weight="600" fill="#53617a">Persistent workspace data</text>
+<text x="962" y="701" font-size="14" fill="#64738a">Repositories · configuration · session state</text>
+<rect x="900" y="761" width="430" height="48" rx="12" fill="none" stroke="#b9c3d7" stroke-dasharray="5 5"/>
+<text x="1115" y="791" text-anchor="middle" font-size="15" fill="#77839a">Additional isolated workspaces · shared nodes</text>
+
+<!-- Connections: administration, workspace management and supervision -->
+<path d="M302 340 H354 Q364 340 364 350 V360 Q364 370 374 370 H590 Q600 370 600 380 V400" class="wire"/>
+<text x="460" y="354" class="label">Install and configure</text>
+<path d="M302 492 H450" class="wire" marker-start="url(#arrow)"/>
+<path d="M750 430 H940" class="wire" marker-start="url(#arrow)"/>
+<text x="845" y="413" text-anchor="middle" class="label">Lifecycle / status</text>
+<path d="M1115 480 V520" class="wire"/>
+<path d="M1115 611 V650" fill="none" stroke="#a5afc3" stroke-width="1.8"/>
+
+<!-- Claude's existing connection goes directly to the remote agent -->
+<path d="M1290 118 H1348 Q1366 118 1366 136 V548 Q1366 566 1348 566 H1290" fill="none" stroke="#b96b43" stroke-width="2" marker-start="url(#orange)" marker-end="url(#orange)"/>
+<rect x="1060" y="265" width="280" height="27" rx="8" fill="#fcfcfa"/>
+<text x="1200" y="284" text-anchor="middle" font-size="14" fill="#a06140">Native Claude Remote Control</text>
+
+<!-- Generic authentication bridge: mechanism intentionally left unspecified -->
+<path d="M940 460 H865 Q855 460 855 470 V615 Q855 625 845 625 H270 Q260 625 260 615 V545" class="bridge"/>
+<rect x="442" y="608" width="302" height="33" rx="8" fill="#f4f7f5"/>
+<text x="593" y="630" text-anchor="middle" class="label">Browser requests + login callbacks</text>
+<path d="M145 545 V665" class="wire"/>
+<text x="160" y="605" font-size="13" fill="#788792">Open locally</text>
+
+<line x1="56" y1="881" x2="1384" y2="881" stroke="#e2e6e5"/>
+<circle cx="64" cy="916" r="4" fill="#658b76"/>
+<text x="80" y="922" font-size="16" fill="#52675c">Close your laptop. The workspace keeps running.</text>
+<text x="1384" y="922" text-anchor="end" font-size="13" fill="#8b959b">MVP v0 · design overview</text>
+</svg>
