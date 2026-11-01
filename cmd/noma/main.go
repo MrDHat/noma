@@ -1,18 +1,17 @@
-// Command noma is part of Noma.
+// Command noma is the Noma CLI.
 package main
 
 import (
-	"fmt"
+	"context"
 	"os"
+	"os/signal"
 
-	"github.com/MrDHat/noma/internal/version"
+	"github.com/MrDHat/noma/internal/cli"
 )
 
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
-		fmt.Println("noma", version.Version)
-		return
-	}
-	fmt.Fprintln(os.Stderr, "usage: noma version")
-	os.Exit(2)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	code := cli.Run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
 }

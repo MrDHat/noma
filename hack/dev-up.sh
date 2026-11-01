@@ -57,4 +57,26 @@ fi
 kc apply -f "${ROOT}/deploy/dev/postgres.yaml"
 kc -n noma-system rollout status statefulset/postgres --timeout=180s
 
+echo "==> noma-server"
+if ! kc -n noma-system get secret noma-server >/dev/null 2>&1; then
+  pg_password="$(kc -n noma-system get secret postgres -o jsonpath='{.data.password}' | base64 -d)"
+  kc -n noma-system create secret generic noma-server \
+    --from-literal=database-url="postgres://noma:${pg_password}@postgres.noma-system:5432/noma?sslmode=disable" \
+    --from-literal=admin-token="$(openssl rand -hex 32)"
+fi
+"${ROOT}/hack/deploy.sh"
+
+echo "==> CLI config"
+config="${NOMA_CONFIG:-${HOME}/.config/noma/config.json}"
+mkdir -p "$(dirname "$config")"
+token="$(kc -n noma-system get secret noma-server -o jsonpath='{.data.admin-token}' | base64 -d)"
+(umask 077 && cat >"$config" <<JSON
+{
+  "token": "${token}",
+  "portForward": {"context": "${PROFILE}", "namespace": "noma-system", "service": "noma-server", "port": 8080}
+}
+JSON
+)
+echo "wrote ${config}"
+
 echo "==> ready (kubectl context: ${PROFILE})"
