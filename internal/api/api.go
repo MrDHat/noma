@@ -7,6 +7,8 @@ import "time"
 // Workspace phases, as reported to the CLI.
 const (
 	PhasePending  = "pending"
+	PhaseStarting = "starting"
+	PhaseError    = "error"
 	PhaseDeleting = "deleting"
 )
 

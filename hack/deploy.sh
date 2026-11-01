@@ -23,6 +23,6 @@ cp "${out}/noma-server" "$ctx/"
 docker build -q --platform "linux/${goarch}" -t noma-server:dev -f "${ROOT}/build/server.Dockerfile" "$ctx"
 minikube -p "$PROFILE" image load --overwrite noma-server:dev
 
-kc apply -f "${ROOT}/deploy/dev/server.yaml"
+kc apply -f "${ROOT}/deploy/dev/rbac.yaml" -f "${ROOT}/deploy/dev/server.yaml"
 kc -n noma-system rollout restart deployment/noma-server
 kc -n noma-system rollout status deployment/noma-server --timeout=120s

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/MrDHat/noma/internal/api"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -90,4 +91,34 @@ func (s *Store) DeleteWorkspace(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// Workspaces returns every workspace, for the reconciler.
+func (s *Store) Workspaces(ctx context.Context) ([]Workspace, error) {
+	var ws []Workspace
+	err := s.db.NewSelect().Model(&ws).Order("created_at").Scan(ctx)
+	return ws, err
+}
+
+// MarkDeleted records that the user wants the workspace gone. The reconciler
+// removes its Kubernetes objects and then the row.
+func (s *Store) MarkDeleted(ctx context.Context, id string) error {
+	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("desired = ?", DesiredDeleted).
+		Set("phase = ?", api.PhaseDeleting).
+		Set("message = ''").
+		Set("updated_at = now()").
+		Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+// SetObserved records what the reconciler saw. It leaves rows that are being
+// deleted alone, so a late update can't undo a delete.
+func (s *Store) SetObserved(ctx context.Context, id, phase, message string) error {
+	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("phase = ?", phase).
+		Set("message = ?", message).
+		Set("updated_at = now()").
+		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+	return err
 }
