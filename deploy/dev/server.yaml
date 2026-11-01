@@ -15,6 +15,8 @@ spec:
   ports:
     - name: api
       port: 8080
+    - name: agents
+      port: 8443
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -53,13 +55,22 @@ spec:
                   key: admin-token
           ports:
             - containerPort: 8080
+            - containerPort: 8443
           readinessProbe:
             httpGet:
               path: /healthz
               port: 8080
             periodSeconds: 2
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/noma/tls
+              readOnly: true
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+      volumes:
+        - name: tls
+          secret:
+            secretName: noma-server-tls

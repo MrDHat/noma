@@ -112,13 +112,28 @@ func (s *Store) MarkDeleted(ctx context.Context, id string) error {
 	return err
 }
 
-// SetObserved records what the reconciler saw. It leaves rows that are being
-// deleted alone, so a late update can't undo a delete.
-func (s *Store) SetObserved(ctx context.Context, id, phase, message string) error {
-	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+// SetPhase records a workspace's phase. It leaves rows that are being
+// deleted alone, so a late update can't undo a delete. With from set, it only
+// changes rows currently in one of those phases.
+func (s *Store) SetPhase(ctx context.Context, id, phase, message string, from ...string) error {
+	q := s.db.NewUpdate().Model((*Workspace)(nil)).
 		Set("phase = ?", phase).
 		Set("message = ?", message).
 		Set("updated_at = now()").
-		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+		Where("id = ? AND desired = ?", id, DesiredRunning)
+	if len(from) > 0 {
+		q = q.Where("phase IN (?)", bun.List(from))
+	}
+	_, err := q.Exec(ctx)
 	return err
+}
+
+// WorkspaceByID returns the workspace with the given ID.
+func (s *Store) WorkspaceByID(ctx context.Context, id string) (*Workspace, error) {
+	w := new(Workspace)
+	err := s.db.NewSelect().Model(w).Where("id = ?", id).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return w, err
 }
