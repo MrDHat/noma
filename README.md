@@ -16,3 +16,7 @@ The initial design targets Claude Code on Kubernetes in your AWS account:
 - **Workspace supervisor** runs alongside the agent, starts and monitors it, and relays browser requests. Each workspace has its own repositories and persistent data.
 
 Once a workspace is ready, connect through Claude's native Remote Control. The agent and its tools keep running remotely when your laptop disconnects.
+
+## License
+
+Noma is source-available under the [Elastic License 2.0](LICENSE). You can use, modify, and self-host it for your own use. You may not offer it to others as a hosted or managed service.
