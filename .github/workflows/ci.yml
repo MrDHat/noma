@@ -24,3 +24,33 @@ jobs:
       - run: make test
       - run: make build
       - run: ./bin/noma version && ./bin/noma-server version && ./bin/noma-agent version
+
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      MINIKUBE_VERSION: v1.38.1
+      MINIKUBE_SHA256: 099477eaf248bcb5bcea8ce78a2898e93ac01461c35189da1848c3de82ecd22e
+      KUBECTL_VERSION: v1.35.1
+      KUBECTL_SHA256: 36e2f4ac66259232341dd7866952d64a958846470f6a9a6a813b9117bd965207
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install minikube and kubectl
+        run: |
+          curl -fsSLo minikube "https://github.com/kubernetes/minikube/releases/download/${MINIKUBE_VERSION}/minikube-linux-amd64"
+          echo "${MINIKUBE_SHA256}  minikube" | sha256sum -c -
+          curl -fsSLo kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "${KUBECTL_SHA256}  kubectl" | sha256sum -c -
+          sudo install minikube kubectl /usr/local/bin/
+          rm minikube kubectl
+      - run: make dev-up
+      - run: make e2e
+      - name: Cluster state on failure
+        if: failure()
+        run: |
+          kubectl --context noma get pods -A -o wide || true
+          kubectl --context noma get events -A --sort-by=.lastTimestamp | tail -50 || true
