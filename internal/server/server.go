@@ -25,6 +25,8 @@ const devUser = "dev"
 type Server struct {
 	Store      *store.Store
 	AdminToken string
+	// Wake asks the reconciler to act on a change.
+	Wake func()
 }
 
 // Handler returns the HTTP handler for the CLI API.
@@ -72,6 +74,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request, user st
 		internalError(w, err)
 		return
 	}
+	s.Wake()
 	writeJSON(w, http.StatusCreated, toAPI(ws))
 }
 
@@ -120,7 +123,7 @@ func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request, user strin
 func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request, user string) {
 	ws, err := s.Store.WorkspaceByName(r.Context(), user, r.PathValue("name"))
 	if err == nil {
-		err = s.Store.DeleteWorkspace(r.Context(), ws.ID)
+		err = s.Store.MarkDeleted(r.Context(), ws.ID)
 	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "workspace not found")
@@ -130,7 +133,8 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request, user st
 		internalError(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	s.Wake()
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func toAPI(ws *store.Workspace) api.Workspace {

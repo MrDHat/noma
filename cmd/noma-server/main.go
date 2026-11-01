@@ -12,6 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+
+	"github.com/MrDHat/noma/internal/reconcile"
 	"github.com/MrDHat/noma/internal/server"
 	"github.com/MrDHat/noma/internal/store"
 	"github.com/MrDHat/noma/internal/version"
@@ -42,9 +46,20 @@ func run() error {
 	}
 	defer st.Close() //nolint:errcheck
 
+	kubeConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return fmt.Errorf("kubernetes config: %w", err)
+	}
+	kube, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		return err
+	}
+	rec := reconcile.New(st, kube)
+	go rec.Run(ctx)
+
 	srv := &http.Server{
 		Addr:              envOr("NOMA_LISTEN", ":8080"),
-		Handler:           (&server.Server{Store: st, AdminToken: token}).Handler(),
+		Handler:           (&server.Server{Store: st, AdminToken: token, Wake: rec.Wake}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	errc := make(chan error, 1)

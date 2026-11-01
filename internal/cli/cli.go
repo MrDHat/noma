@@ -2,13 +2,17 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/MrDHat/noma/internal/api"
 	"github.com/MrDHat/noma/internal/version"
 )
+
+const pollInterval = time.Second
 
 const usage = `usage:
   noma up [--name NAME] <git-url>   create a workspace for a public repo
@@ -87,6 +91,23 @@ func rm(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := c.DeleteWorkspace(ctx, args[0]); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "workspace %s deleted\n", args[0])
-	return nil
+	fmt.Fprintf(stdout, "deleting workspace %s…\n", args[0])
+	// The server removes the pod and volume, then the record.
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	for {
+		_, err := c.Workspace(ctx, args[0])
+		if errors.Is(err, ErrNotFound) {
+			fmt.Fprintf(stdout, "workspace %s deleted\n", args[0])
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("workspace %s is still being deleted", args[0])
+		case <-time.After(pollInterval):
+		}
+	}
 }
