@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: noma-server
+  namespace: noma-system
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: noma-server
+  namespace: noma-system
+spec:
+  selector:
+    app: noma-server
+  ports:
+    - name: api
+      port: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: noma-server
+  namespace: noma-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: noma-server
+  template:
+    metadata:
+      labels:
+        app: noma-server
+    spec:
+      serviceAccountName: noma-server
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: server
+          image: noma-server:dev
+          imagePullPolicy: Never
+          env:
+            - name: NOMA_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: noma-server
+                  key: database-url
+            - name: NOMA_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: noma-server
+                  key: admin-token
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

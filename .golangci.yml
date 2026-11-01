@@ -4,6 +4,12 @@ run:
     - e2e
 linters:
   default: standard
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
 formatters:
   enable:
     - gofmt
