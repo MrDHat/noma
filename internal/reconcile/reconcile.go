@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
@@ -30,15 +31,16 @@ var applyOpts = metav1.ApplyOptions{FieldManager: fieldManager, Force: true}
 
 // Reconciler creates and deletes workspace objects.
 type Reconciler struct {
-	Store *store.Store
-	Kube  kubernetes.Interface
+	Store  *store.Store
+	Kube   kubernetes.Interface
+	Config Config
 
 	wake chan struct{}
 }
 
 // New returns a reconciler. Call Run to start it.
-func New(st *store.Store, kube kubernetes.Interface) *Reconciler {
-	return &Reconciler{Store: st, Kube: kube, wake: make(chan struct{}, 1)}
+func New(st *store.Store, kube kubernetes.Interface, cfg Config) *Reconciler {
+	return &Reconciler{Store: st, Kube: kube, Config: cfg, wake: make(chan struct{}, 1)}
 }
 
 // Wake asks for a pass soon. It never blocks.
@@ -130,42 +132,49 @@ func (r *Reconciler) ensure(ctx context.Context, ws *store.Workspace) error {
 			return err
 		},
 		func() error {
-			_, err := r.Kube.AppsV1().StatefulSets(ns).Apply(ctx, statefulSet(ws), applyOpts)
+			_, err := r.Kube.AppsV1().StatefulSets(ns).Apply(ctx, statefulSet(ws, r.Config), applyOpts)
 			return err
 		},
 	}
 	for _, step := range steps {
 		if err := step(); err != nil {
-			_ = r.Store.SetObserved(ctx, ws.ID, api.PhaseError, "could not create workspace objects")
+			_ = r.Store.SetPhase(ctx, ws.ID, api.PhaseError, "could not create workspace objects")
 			return err
 		}
 	}
-	phase, msg, err := r.observe(ctx, ws)
+	return r.observe(ctx, ws)
+}
+
+// observe records the workspace pod's state while it starts. Once the pod
+// runs, the agent reports the phase; observe only moves a workspace from
+// pending to starting then, so it never overwrites what the agent said.
+func (r *Reconciler) observe(ctx context.Context, ws *store.Workspace) error {
+	pod, err := r.Kube.CoreV1().Pods(namespaceFor(ws.Owner)).Get(ctx, ws.ID+"-0", metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return r.setStarting(ctx, ws, "creating pod")
+	}
 	if err != nil {
 		return err
 	}
-	if phase != ws.Phase || msg != ws.Message {
-		return r.Store.SetObserved(ctx, ws.ID, phase, msg)
+	for _, cs := range pod.Status.ContainerStatuses {
+		if w := cs.State.Waiting; w != nil && w.Reason != "ContainerCreating" {
+			return r.setStarting(ctx, ws, w.Reason)
+		}
+	}
+	if pod.Status.Phase != corev1.PodRunning {
+		return r.setStarting(ctx, ws, "pod "+string(pod.Status.Phase))
+	}
+	if ws.Phase == api.PhasePending || ws.Phase == api.PhaseStarting {
+		return r.Store.SetPhase(ctx, ws.ID, api.PhaseStarting, "starting agent", api.PhasePending, api.PhaseStarting)
 	}
 	return nil
 }
 
-// observe turns the workspace pod's state into a phase and message.
-// The agent reports readiness itself once it runs (M2.5).
-func (r *Reconciler) observe(ctx context.Context, ws *store.Workspace) (string, string, error) {
-	pod, err := r.Kube.CoreV1().Pods(namespaceFor(ws.Owner)).Get(ctx, ws.ID+"-0", metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return api.PhaseStarting, "creating pod", nil
+func (r *Reconciler) setStarting(ctx context.Context, ws *store.Workspace, msg string) error {
+	if ws.Phase == api.PhaseStarting && ws.Message == msg {
+		return nil
 	}
-	if err != nil {
-		return "", "", err
-	}
-	for _, cs := range pod.Status.ContainerStatuses {
-		if w := cs.State.Waiting; w != nil && w.Reason != "ContainerCreating" {
-			return api.PhaseStarting, w.Reason, nil
-		}
-	}
-	return api.PhaseStarting, "pod " + string(pod.Status.Phase), nil
+	return r.Store.SetPhase(ctx, ws.ID, api.PhaseStarting, msg)
 }
 
 // remove deletes a workspace's objects, then its row once they are gone.

@@ -75,8 +75,45 @@ func up(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "workspace %s created (%s)\n", ws.Name, ws.Phase)
-	return nil
+	fmt.Fprintf(stdout, "workspace %s created\n", ws.Name)
+	return waitReady(ctx, c, ws.Name, stdout)
+}
+
+// waitReady prints progress until the workspace is ready. Ctrl-C stops
+// waiting; the workspace keeps going.
+func waitReady(ctx context.Context, c *Client, name string, stdout io.Writer) error {
+	last := ""
+	for {
+		ws, err := c.Workspace(ctx, name)
+		if err != nil {
+			if ctx.Err() != nil {
+				return fmt.Errorf("stopped waiting; workspace %s keeps starting", name)
+			}
+			return err
+		}
+		if line := progress(ws); line != last {
+			fmt.Fprintln(stdout, line)
+			last = line
+		}
+		switch ws.Phase {
+		case api.PhaseReady:
+			return nil
+		case api.PhaseError:
+			return fmt.Errorf("workspace %s failed: %s", name, ws.Message)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("stopped waiting; workspace %s keeps starting", name)
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
+func progress(ws *api.Workspace) string {
+	if ws.Message == "" {
+		return "  " + ws.Phase
+	}
+	return fmt.Sprintf("  %s: %s", ws.Phase, ws.Message)
 }
 
 func rm(ctx context.Context, args []string, stdout io.Writer) error {

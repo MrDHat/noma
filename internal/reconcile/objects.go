@@ -10,6 +10,7 @@ import (
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	networkingv1ac "k8s.io/client-go/applyconfigurations/networking/v1"
 
+	"github.com/MrDHat/noma/internal/api"
 	"github.com/MrDHat/noma/internal/store"
 )
 
@@ -20,16 +21,28 @@ const (
 	labelWorkspace = "noma.dev/workspace"
 )
 
-// Workspace pod settings for M2. The image is a placeholder until the
-// workspace image exists.
+// Workspace pod settings for M2.
 const (
-	workspaceImage  = "registry.k8s.io/pause:3.10.1"
 	workspaceUID    = 1000
 	workspaceMemory = "512Mi"
 	workspaceCPU    = "500m"
 	volumeSize      = "1Gi"
 	runtimeClass    = "gvisor"
+	tokenPath       = "/var/run/secrets/noma"
+	tokenLifetime   = 3600
 )
+
+// Config is how the reconciler builds workspace pods.
+type Config struct {
+	// Image is the workspace image, with noma-agent as its entrypoint.
+	Image string
+	// ServerURL is noma-server's in-cluster agent endpoint.
+	ServerURL string
+}
+
+// workspaceDir is where a workspace's volume is mounted. Each workspace has
+// its own path, because Claude keys its per-project state by path.
+func workspaceDir(ws *store.Workspace) string { return "/workspaces/" + ws.ID }
 
 // namespaceFor returns the namespace holding a user's workspaces.
 func namespaceFor(owner string) string { return "noma-u-" + owner }
@@ -96,7 +109,7 @@ func volumeClaim(ws *store.Workspace) *corev1ac.PersistentVolumeClaimApplyConfig
 }
 
 // statefulSet runs the workspace pod: at most one, under gVisor, locked down.
-func statefulSet(ws *store.Workspace) *appsv1ac.StatefulSetApplyConfiguration {
+func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConfiguration {
 	limits := corev1.ResourceList{
 		corev1.ResourceMemory: resource.MustParse(workspaceMemory),
 		corev1.ResourceCPU:    resource.MustParse(workspaceCPU),
@@ -122,14 +135,34 @@ func statefulSet(ws *store.Workspace) *appsv1ac.StatefulSetApplyConfiguration {
 						WithSeccompProfile(corev1ac.SeccompProfile().WithType(corev1.SeccompProfileTypeRuntimeDefault))).
 					WithContainers(corev1ac.Container().
 						WithName("workspace").
-						WithImage(workspaceImage).
+						WithImage(cfg.Image).
+						WithImagePullPolicy(corev1.PullIfNotPresent).
+						WithEnv(
+							corev1ac.EnvVar().WithName("NOMA_SERVER_URL").WithValue(cfg.ServerURL),
+							corev1ac.EnvVar().WithName("NOMA_TOKEN_FILE").WithValue(tokenPath+"/token"),
+							corev1ac.EnvVar().WithName("NOMA_WORKSPACE_DIR").WithValue(workspaceDir(ws)),
+							corev1ac.EnvVar().WithName("HOME").WithValue(workspaceDir(ws)+"/home")).
 						WithResources(corev1ac.ResourceRequirements().WithRequests(limits).WithLimits(limits)).
 						WithSecurityContext(corev1ac.SecurityContext().
 							WithAllowPrivilegeEscalation(false).
 							WithReadOnlyRootFilesystem(true).
 							WithCapabilities(corev1ac.Capabilities().WithDrop("ALL"))).
-						WithVolumeMounts(corev1ac.VolumeMount().WithName("workspace").WithMountPath("/workspace"))).
-					WithVolumes(corev1ac.Volume().
-						WithName("workspace").
-						WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().WithClaimName(ws.ID))))))
+						WithVolumeMounts(
+							corev1ac.VolumeMount().WithName("workspace").WithMountPath(workspaceDir(ws)),
+							corev1ac.VolumeMount().WithName("tmp").WithMountPath("/tmp"),
+							corev1ac.VolumeMount().WithName("token").WithMountPath(tokenPath).WithReadOnly(true))).
+					WithVolumes(
+						corev1ac.Volume().WithName("workspace").
+							WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().WithClaimName(ws.ID)),
+						corev1ac.Volume().WithName("tmp").
+							WithEmptyDir(corev1ac.EmptyDirVolumeSource()),
+						// A token for noma-server only, bound to this pod and
+						// rotated by the kubelet.
+						corev1ac.Volume().WithName("token").
+							WithProjected(corev1ac.ProjectedVolumeSource().WithSources(
+								corev1ac.VolumeProjection().WithServiceAccountToken(
+									corev1ac.ServiceAccountTokenProjection().
+										WithAudience(api.TokenAudience).
+										WithExpirationSeconds(tokenLifetime).
+										WithPath("token"))))))))
 }

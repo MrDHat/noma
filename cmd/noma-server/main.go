@@ -54,17 +54,30 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	rec := reconcile.New(st, kube)
+	rec := reconcile.New(st, kube, reconcile.Config{
+		Image:     envOr("NOMA_WORKSPACE_IMAGE", "noma-workspace:dev"),
+		ServerURL: envOr("NOMA_AGENT_URL", "https://noma-server.noma-system.svc:8443"),
+	})
 	go rec.Run(ctx)
 
-	srv := &http.Server{
+	// The CLI API, and the agent endpoint, which only workspaces reach and
+	// which always uses TLS because agents send their token on every request.
+	cliAPI := &http.Server{
 		Addr:              envOr("NOMA_LISTEN", ":8080"),
 		Handler:           (&server.Server{Store: st, AdminToken: token, Wake: rec.Wake}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	errc := make(chan error, 1)
-	go func() { errc <- srv.ListenAndServe() }()
-	slog.Info("noma-server started", "version", version.Version, "addr", srv.Addr)
+	agentAPI := &http.Server{
+		Addr:              envOr("NOMA_AGENT_LISTEN", ":8443"),
+		Handler:           (&server.AgentServer{Store: st, Kube: kube}).Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	tlsDir := envOr("NOMA_TLS_DIR", "/etc/noma/tls")
+
+	errc := make(chan error, 2)
+	go func() { errc <- cliAPI.ListenAndServe() }()
+	go func() { errc <- agentAPI.ListenAndServeTLS(tlsDir+"/tls.crt", tlsDir+"/tls.key") }()
+	slog.Info("noma-server started", "version", version.Version, "api", cliAPI.Addr, "agents", agentAPI.Addr)
 
 	select {
 	case err := <-errc:
@@ -73,7 +86,7 @@ func run() error {
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+	return errors.Join(cliAPI.Shutdown(shutdownCtx), agentAPI.Shutdown(shutdownCtx))
 }
 
 func envOr(key, def string) string {
