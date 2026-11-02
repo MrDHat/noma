@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -21,7 +22,7 @@ const usage = `usage:
 `
 
 // Run runs the noma command with args (without the program name).
-func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -32,7 +33,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "noma", version.Version)
 		return 0
 	case "up":
-		err = up(ctx, args[1:], stdout)
+		err = up(ctx, args[1:], bufio.NewReader(stdin), stdout)
 	case "rm":
 		err = rm(ctx, args[1:], stdout)
 	case "help", "-h", "--help":
@@ -57,7 +58,7 @@ func connect(ctx context.Context) (*Client, error) {
 	return Connect(ctx, cfg)
 }
 
-func up(ctx context.Context, args []string, stdout io.Writer) error {
+func up(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Writer) error {
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	name := fs.String("name", "", "workspace name (default: the repo name)")
 	if err := fs.Parse(args); err != nil {
@@ -76,13 +77,13 @@ func up(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(stdout, "workspace %s created\n", ws.Name)
-	return waitReady(ctx, c, ws.Name, stdout)
+	return waitReady(ctx, c, ws.Name, stdin, stdout)
 }
 
 // waitReady prints progress until the workspace is ready. Ctrl-C stops
 // waiting; the workspace keeps going.
-func waitReady(ctx context.Context, c *Client, name string, stdout io.Writer) error {
-	last := ""
+func waitReady(ctx context.Context, c *Client, name string, stdin *bufio.Reader, stdout io.Writer) error {
+	last, answered := "", ""
 	for {
 		ws, err := c.Workspace(ctx, name)
 		if err != nil {
@@ -96,7 +97,15 @@ func waitReady(ctx context.Context, c *Client, name string, stdout io.Writer) er
 			last = line
 		}
 		switch ws.Phase {
+		case api.PhaseSignIn:
+			if ws.SignIn != nil && ws.SignIn.PublicKey != answered {
+				answered = ws.SignIn.PublicKey
+				if err := signIn(ctx, c, name, ws.SignIn, stdin, stdout); err != nil {
+					return fmt.Errorf("sign-in: %w", err)
+				}
+			}
 		case api.PhaseReady:
+			fmt.Fprintf(stdout, "\nWorkspace %s is ready. Open it in claude.ai/code or the Claude app:\n  %s\n", name, ws.Link)
 			return nil
 		case api.PhaseError:
 			return fmt.Errorf("workspace %s failed: %s", name, ws.Message)

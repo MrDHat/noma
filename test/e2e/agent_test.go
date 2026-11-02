@@ -17,7 +17,7 @@ import (
 func TestUpClonesTheRepo(t *testing.T) {
 	out := mustNoma(t, "up", "--name", "e2e-clone", demoRepo)
 	t.Cleanup(func() { _, _ = noma(t, "rm", "e2e-clone") })
-	if !strings.Contains(out, "cloning") || !strings.HasSuffix(strings.TrimSpace(out), "ready") {
+	if !strings.Contains(out, "cloning") || !strings.Contains(out, "is ready") {
 		t.Fatalf("noma up did not show progress up to ready:\n%s", out)
 	}
 	ws, err := client(t).Workspace(context.Background(), "e2e-clone")

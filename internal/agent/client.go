@@ -51,8 +51,8 @@ func (c *Client) Config(ctx context.Context) (*api.AgentConfig, error) {
 }
 
 // Status reports the workspace phase.
-func (c *Client) Status(ctx context.Context, phase, message string) error {
-	_, err := c.do(ctx, http.MethodPost, "/agent/v1/status", api.AgentStatus{Phase: phase, Message: message}, nil)
+func (c *Client) Status(ctx context.Context, st api.AgentStatus) error {
+	_, err := c.do(ctx, http.MethodPost, "/agent/v1/status", st, nil)
 	return err
 }
 

@@ -39,7 +39,11 @@ func run(ctx context.Context) error {
 		return err
 	}
 	slog.Info("noma-agent started", "version", version.Version)
-	return (&agent.Agent{Client: c, Dir: os.Getenv("NOMA_WORKSPACE_DIR")}).Run(ctx)
+	return (&agent.Agent{
+		Client:    c,
+		Dir:       os.Getenv("NOMA_WORKSPACE_DIR"),
+		ClaudeBin: envOr("NOMA_CLAUDE_BIN", "claude"),
+	}).Run(ctx)
 }
 
 func envOr(key, def string) string {

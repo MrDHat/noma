@@ -50,10 +50,23 @@ func kubectl(t *testing.T, args ...string) string {
 	return string(out)
 }
 
-// noma runs the CLI and returns its combined output and exit error.
+// signInCode is what the tests paste when the fake Claude asks to sign in.
+const signInCode = "fake-code-e2e"
+
+// noma runs the CLI and returns its combined output and exit error. If it
+// asks for a Claude sign-in code, it gets signInCode.
 func noma(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	out, err := exec.Command(nomaBin, args...).CombinedOutput()
+	return nomaWithInput(t, signInCode+"\n", args...)
+}
+
+// nomaWithInput runs the CLI with stdin set to input.
+func nomaWithInput(t *testing.T, input string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command(nomaBin, args...)
+	cmd.Stdin = strings.NewReader(input)
+	cmd.Env = append(os.Environ(), "NOMA_NO_BROWSER=1")
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
