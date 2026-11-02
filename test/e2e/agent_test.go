@@ -17,8 +17,11 @@ import (
 func TestUpClonesTheRepo(t *testing.T) {
 	out := mustNoma(t, "up", "--name", "e2e-clone", demoRepo)
 	t.Cleanup(func() { _, _ = noma(t, "rm", "e2e-clone") })
-	if !strings.Contains(out, "cloning") || !strings.Contains(out, "is ready") {
-		t.Fatalf("noma up did not show progress up to ready:\n%s", out)
+	// The CLI polls once a second, so a quick clone can finish between polls
+	// without "cloning" ever being printed. The README check below is the
+	// proof that the repo was cloned.
+	if !strings.Contains(out, "is ready") {
+		t.Fatalf("noma up did not reach ready:\n%s", out)
 	}
 	ws, err := client(t).Workspace(context.Background(), "e2e-clone")
 	if err != nil {
