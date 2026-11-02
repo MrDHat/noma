@@ -1,11 +1,14 @@
 // Command fakeclaude stands in for Claude Code in CI, where real sign-in
 // isn't possible. It mimics only what noma-agent uses, with the same output
-// and files as Claude Code 2.1.316: auth status, and remote-control, which
-// needs a terminal and a trusted directory, records its environment in
-// bridge-pointer.json and prints the claude.ai/code link.
+// and files as Claude Code 2.1.316: auth status; auth login, which prints the
+// authorize URL, asks for the code and accepts any code starting with
+// "fake-code-"; and remote-control, which needs a login, a terminal and a
+// trusted directory, records its environment in bridge-pointer.json and
+// prints the claude.ai/code link.
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -27,6 +30,8 @@ func main() {
 		fmt.Println("2.1.316 (Claude Code) [fake]")
 	case args == "auth status":
 		authStatus()
+	case args == "auth login":
+		authLogin()
 	case strings.HasPrefix(args, "remote-control"):
 		remoteControl()
 	default:
@@ -35,18 +40,64 @@ func main() {
 	}
 }
 
+func credentialsPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude", ".credentials.json")
+}
+
+func loggedIn() bool {
+	_, err := os.Stat(credentialsPath())
+	return err == nil
+}
+
 func authStatus() {
+	method := "none"
+	if loggedIn() {
+		method = "claude.ai"
+	}
 	out, _ := json.MarshalIndent(map[string]any{
-		"loggedIn":    true,
-		"authMethod":  "claude.ai",
+		"loggedIn":    loggedIn(),
+		"authMethod":  method,
 		"apiProvider": "firstParty",
 	}, "", "  ")
 	fmt.Println(string(out))
+	if !loggedIn() {
+		os.Exit(1)
+	}
+}
+
+func authLogin() {
+	url := "https://claude.com/cai/oauth/authorize?code=true&client_id=fake&response_type=code" +
+		"&code_challenge=fake&code_challenge_method=S256&state=" + randomHex(8)
+	fmt.Printf("Opening browser to sign in…\r\nIf the browser didn't open, visit: \x1b]8;;%s\x07%s\x1b]8;;\x07\r\nPaste code here if prompted > ", url, url)
+	code, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	if !strings.HasPrefix(strings.TrimSpace(code), "fake-code-") {
+		fmt.Print("\r\nOAuth error: Invalid code\r\n")
+		os.Exit(1)
+	}
+	if err := os.MkdirAll(filepath.Dir(credentialsPath()), 0o700); err == nil {
+		err = os.WriteFile(credentialsPath(), []byte(`{"fake":true}`), 0o600)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+	fmt.Print("\r\nLogin successful.\r\n")
+}
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func remoteControl() {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		fmt.Fprintln(os.Stderr, "Error: Remote Control needs an interactive terminal.")
+		os.Exit(1)
+	}
+	if !loggedIn() {
+		fmt.Fprint(os.Stderr, "Error: You must be logged in to use Remote Control.\r\n")
 		os.Exit(1)
 	}
 	home, _ := os.UserHomeDir()
@@ -55,9 +106,7 @@ func remoteControl() {
 		fmt.Fprintln(os.Stderr, "Error: Workspace not trusted. Run claude in this directory and accept the trust dialog first.")
 		os.Exit(1)
 	}
-	b := make([]byte, 12)
-	_, _ = rand.Read(b)
-	env := "env_fake" + hex.EncodeToString(b)
+	env := "env_fake" + randomHex(12)
 	key := regexp.MustCompile(`[^A-Za-z0-9]`).ReplaceAllString(dir, "-")
 	project := filepath.Join(home, ".claude", "projects", key)
 	pointer, _ := json.Marshal(map[string]any{"environmentId": env, "pid": os.Getpid()})

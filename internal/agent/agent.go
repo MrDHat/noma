@@ -20,6 +20,9 @@ type Agent struct {
 	Dir string
 	// ClaudeBin is the claude binary.
 	ClaudeBin string
+
+	// codes passes sealed sign-in codes from the message loop to signIn.
+	codes chan *api.SignInCode
 }
 
 // Run sets the workspace up, starts Claude and keeps it running, and serves
@@ -31,6 +34,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		return err
 	}
 	slog.Info("workspace", "id", cfg.ID, "name", cfg.Name)
+	a.codes = make(chan *api.SignInCode, 4)
 
 	go func() {
 		if err := a.setup(ctx, cfg); err != nil {
@@ -78,9 +82,9 @@ func (a *Agent) superviseClaude(ctx context.Context, c *Claude) {
 	}
 }
 
-// waitForLogin returns once Claude has a login, or false if ctx ends first.
+// waitForLogin returns once Claude has a login, running sign-ins until one
+// succeeds, or false if ctx ends first.
 func (a *Agent) waitForLogin(ctx context.Context, c *Claude) bool {
-	reported := false
 	for ctx.Err() == nil {
 		ok, err := c.LoggedIn(ctx)
 		if err != nil {
@@ -89,11 +93,11 @@ func (a *Agent) waitForLogin(ctx context.Context, c *Claude) bool {
 		if ok {
 			return true
 		}
-		if !reported {
-			a.report(ctx, api.AgentStatus{Phase: api.PhaseSignIn, Message: "waiting for Claude sign-in"})
-			reported = true
+		if err := a.signIn(ctx, c); err != nil && ctx.Err() == nil {
+			slog.Warn("claude sign-in failed", "err", err)
+			a.report(ctx, api.AgentStatus{Phase: api.PhaseClaude, Message: "sign-in failed, trying again"})
+			sleep(ctx, 2*time.Second)
 		}
-		sleep(ctx, 5*time.Second)
 	}
 	return false
 }
@@ -130,7 +134,15 @@ func (a *Agent) serve(ctx context.Context) error {
 			}
 			continue
 		}
-		if m != nil {
+		switch {
+		case m == nil:
+		case m.Type == api.MessageSignInCode && m.SignInCode != nil:
+			select {
+			case a.codes <- m.SignInCode:
+			default:
+				slog.Warn("dropped a sign-in code nobody is waiting for")
+			}
+		default:
 			slog.Warn("unknown message", "type", m.Type)
 		}
 	}

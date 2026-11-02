@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -139,6 +141,18 @@ func (a *AgentServer) status(w http.ResponseWriter, r *http.Request, ws *store.W
 	if len(st.Message) > 500 {
 		st.Message = st.Message[:500]
 	}
+	signInURL, signInKey := "", ""
+	if st.Phase == api.PhaseSignIn {
+		if st.SignIn == nil || !validSignIn(st.SignIn) {
+			writeError(w, http.StatusBadRequest, "invalid sign-in")
+			return
+		}
+		signInURL, signInKey = st.SignIn.URL, st.SignIn.PublicKey
+	}
+	if err := a.Store.SetSignIn(r.Context(), ws.ID, signInURL, signInKey); err != nil {
+		internalError(w, err)
+		return
+	}
 	if st.Link != "" {
 		if !claudeLink.MatchString(st.Link) {
 			writeError(w, http.StatusBadRequest, "invalid link")
@@ -166,4 +180,15 @@ func (a *AgentServer) messages(w http.ResponseWriter, r *http.Request, ws *store
 	case <-ctx.Done():
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// validSignIn accepts only Claude's own sign-in pages, because the CLI opens
+// the URL on the user's machine, and a 32-byte public key.
+func validSignIn(s *api.SignIn) bool {
+	u, err := url.Parse(s.URL)
+	if err != nil || u.Scheme != "https" || (u.Host != "claude.com" && u.Host != "claude.ai") || len(s.URL) > 2048 {
+		return false
+	}
+	key, err := base64.StdEncoding.DecodeString(s.PublicKey)
+	return err == nil && len(key) == 32
 }

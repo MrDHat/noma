@@ -27,6 +27,8 @@ type Server struct {
 	AdminToken string
 	// Wake asks the reconciler to act on a change.
 	Wake func()
+	// SendToAgent queues a message for a workspace's agent.
+	SendToAgent func(id string, m api.AgentMessage) error
 }
 
 // Handler returns the HTTP handler for the CLI API.
@@ -36,6 +38,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/workspaces", s.authed(s.createWorkspace))
 	mux.Handle("GET /v1/workspaces/{name}", s.authed(s.getWorkspace))
 	mux.Handle("DELETE /v1/workspaces/{name}", s.authed(s.deleteWorkspace))
+	mux.Handle("POST /v1/workspaces/{name}/signin", s.authed(s.signIn))
 	return mux
 }
 
@@ -137,8 +140,41 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request, user st
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// signIn passes a sealed Claude sign-in code to the workspace's agent. The
+// server can't read it and never stores it.
+func (s *Server) signIn(w http.ResponseWriter, r *http.Request, user string) {
+	var req api.SignInCode
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil || req.SealedCode == "" {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	ws, err := s.Store.WorkspaceByName(r.Context(), user, r.PathValue("name"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "workspace not found")
+		return
+	}
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if ws.Phase != api.PhaseSignIn || ws.SignInKey == "" || ws.SignInKey != req.PublicKey {
+		writeError(w, http.StatusConflict, "workspace is not waiting for this sign-in")
+		return
+	}
+	if err := s.SendToAgent(ws.ID, api.AgentMessage{Type: api.MessageSignInCode, SignInCode: &req}); err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 func toAPI(ws *store.Workspace) api.Workspace {
+	var signIn *api.SignIn
+	if ws.Phase == api.PhaseSignIn && ws.SignInURL != "" {
+		signIn = &api.SignIn{URL: ws.SignInURL, PublicKey: ws.SignInKey}
+	}
 	return api.Workspace{
+		SignIn:    signIn,
 		ID:        ws.ID,
 		Name:      ws.Name,
 		RepoURL:   ws.RepoURL,

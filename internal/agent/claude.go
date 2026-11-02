@@ -189,6 +189,14 @@ func (t *tailBuffer) Write(p []byte) {
 	}
 }
 
+// raw returns the output as written, with escape sequences. Claude wraps
+// the sign-in URL in a terminal hyperlink, so the plain URL is in there too.
+func (t *tailBuffer) raw() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return string(t.b)
+}
+
 func (t *tailBuffer) text() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()

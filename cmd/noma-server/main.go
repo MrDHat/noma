@@ -62,14 +62,15 @@ func run() error {
 
 	// The CLI API, and the agent endpoint, which only workspaces reach and
 	// which always uses TLS because agents send their token on every request.
+	agents := &server.AgentServer{Store: st, Kube: kube}
 	cliAPI := &http.Server{
 		Addr:              envOr("NOMA_LISTEN", ":8080"),
-		Handler:           (&server.Server{Store: st, AdminToken: token, Wake: rec.Wake}).Handler(),
+		Handler:           (&server.Server{Store: st, AdminToken: token, Wake: rec.Wake, SendToAgent: agents.Send}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	agentAPI := &http.Server{
 		Addr:              envOr("NOMA_AGENT_LISTEN", ":8443"),
-		Handler:           (&server.AgentServer{Store: st, Kube: kube}).Handler(),
+		Handler:           agents.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	tlsDir := envOr("NOMA_TLS_DIR", "/etc/noma/tls")
