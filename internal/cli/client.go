@@ -56,6 +56,11 @@ func (c *Client) Workspace(ctx context.Context, name string) (*api.Workspace, er
 	return &ws, c.do(ctx, http.MethodGet, "/v1/workspaces/"+url.PathEscape(name), nil, &ws)
 }
 
+// SendSignInCode sends a sealed Claude sign-in code to the workspace.
+func (c *Client) SendSignInCode(ctx context.Context, name string, code api.SignInCode) error {
+	return c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(name)+"/signin", code, nil)
+}
+
 // DeleteWorkspace deletes the workspace called name.
 func (c *Client) DeleteWorkspace(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/workspaces/"+url.PathEscape(name), nil, nil)

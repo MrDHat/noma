@@ -30,13 +30,19 @@ const (
 type Workspace struct {
 	bun.BaseModel `bun:"table:workspaces"`
 
-	ID        string    `bun:",pk"`
-	Owner     string    `bun:",notnull"`
-	Name      string    `bun:",notnull"`
-	RepoURL   string    `bun:",notnull"`
-	Desired   string    `bun:",notnull"`
-	Phase     string    `bun:",notnull"`
-	Message   string    `bun:",notnull"`
+	ID      string `bun:",pk"`
+	Owner   string `bun:",notnull"`
+	Name    string `bun:",notnull"`
+	RepoURL string `bun:",notnull"`
+	Desired string `bun:",notnull"`
+	Phase   string `bun:",notnull"`
+	Message string `bun:",notnull"`
+	// Link is the Remote Control link the agent reported.
+	Link string `bun:",notnull"`
+	// SignInURL and SignInKey describe a Claude sign-in waiting for a code:
+	// the URL to open and the agent's one-time public key to seal it with.
+	SignInURL string    `bun:"signin_url,notnull"`
+	SignInKey string    `bun:"signin_key,notnull"`
 	CreatedAt time.Time `bun:",notnull,default:current_timestamp"`
 	UpdatedAt time.Time `bun:",notnull,default:current_timestamp"`
 }
@@ -109,6 +115,23 @@ func (s *Store) MarkDeleted(ctx context.Context, id string) error {
 		Set("message = ''").
 		Set("updated_at = now()").
 		Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+// SetSignIn records a pending Claude sign-in, or clears it with empty values.
+func (s *Store) SetSignIn(ctx context.Context, id, url, key string) error {
+	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("signin_url = ?", url).
+		Set("signin_key = ?", key).
+		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+	return err
+}
+
+// SetLink records the workspace's Remote Control link.
+func (s *Store) SetLink(ctx context.Context, id, link string) error {
+	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("link = ?", link).
+		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
 	return err
 }
 

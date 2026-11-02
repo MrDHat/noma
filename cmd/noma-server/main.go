@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -54,22 +55,28 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	memory, err := resource.ParseQuantity(envOr("NOMA_WORKSPACE_MEMORY", "2Gi"))
+	if err != nil {
+		return fmt.Errorf("NOMA_WORKSPACE_MEMORY: %w", err)
+	}
 	rec := reconcile.New(st, kube, reconcile.Config{
 		Image:     envOr("NOMA_WORKSPACE_IMAGE", "noma-workspace:dev"),
 		ServerURL: envOr("NOMA_AGENT_URL", "https://noma-server.noma-system.svc:8443"),
+		Memory:    memory,
 	})
 	go rec.Run(ctx)
 
 	// The CLI API, and the agent endpoint, which only workspaces reach and
 	// which always uses TLS because agents send their token on every request.
+	agents := &server.AgentServer{Store: st, Kube: kube}
 	cliAPI := &http.Server{
 		Addr:              envOr("NOMA_LISTEN", ":8080"),
-		Handler:           (&server.Server{Store: st, AdminToken: token, Wake: rec.Wake}).Handler(),
+		Handler:           (&server.Server{Store: st, AdminToken: token, Wake: rec.Wake, SendToAgent: agents.Send}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	agentAPI := &http.Server{
 		Addr:              envOr("NOMA_AGENT_LISTEN", ":8443"),
-		Handler:           (&server.AgentServer{Store: st, Kube: kube}).Handler(),
+		Handler:           agents.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	tlsDir := envOr("NOMA_TLS_DIR", "/etc/noma/tls")
