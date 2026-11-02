@@ -23,13 +23,12 @@ const (
 
 // Workspace pod settings for M2.
 const (
-	workspaceUID    = 1000
-	workspaceMemory = "512Mi"
-	workspaceCPU    = "500m"
-	volumeSize      = "1Gi"
-	runtimeClass    = "gvisor"
-	tokenPath       = "/var/run/secrets/noma"
-	tokenLifetime   = 3600
+	workspaceUID  = 1000
+	workspaceCPU  = "500m"
+	volumeSize    = "1Gi"
+	runtimeClass  = "gvisor"
+	tokenPath     = "/var/run/secrets/noma"
+	tokenLifetime = 3600
 )
 
 // Config is how the reconciler builds workspace pods.
@@ -38,6 +37,8 @@ type Config struct {
 	Image string
 	// ServerURL is noma-server's in-cluster agent endpoint.
 	ServerURL string
+	// Memory is each workspace's memory request and limit.
+	Memory resource.Quantity
 }
 
 // workspaceDir is where a workspace's volume is mounted. Each workspace has
@@ -111,7 +112,7 @@ func volumeClaim(ws *store.Workspace) *corev1ac.PersistentVolumeClaimApplyConfig
 // statefulSet runs the workspace pod: at most one, under gVisor, locked down.
 func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConfiguration {
 	limits := corev1.ResourceList{
-		corev1.ResourceMemory: resource.MustParse(workspaceMemory),
+		corev1.ResourceMemory: cfg.Memory,
 		corev1.ResourceCPU:    resource.MustParse(workspaceCPU),
 	}
 	return appsv1ac.StatefulSet(ws.ID, namespaceFor(ws.Owner)).

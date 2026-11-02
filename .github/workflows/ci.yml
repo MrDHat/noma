@@ -34,6 +34,8 @@ jobs:
       MINIKUBE_SHA256: 099477eaf248bcb5bcea8ce78a2898e93ac01461c35189da1848c3de82ecd22e
       KUBECTL_VERSION: v1.35.1
       KUBECTL_SHA256: 36e2f4ac66259232341dd7866952d64a958846470f6a9a6a813b9117bd965207
+      # CI can't sign in to Claude, so workspaces get a fake claude binary.
+      NOMA_CLAUDE: fake
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -54,9 +55,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	memory, err := resource.ParseQuantity(envOr("NOMA_WORKSPACE_MEMORY", "2Gi"))
+	if err != nil {
+		return fmt.Errorf("NOMA_WORKSPACE_MEMORY: %w", err)
+	}
 	rec := reconcile.New(st, kube, reconcile.Config{
 		Image:     envOr("NOMA_WORKSPACE_IMAGE", "noma-workspace:dev"),
 		ServerURL: envOr("NOMA_AGENT_URL", "https://noma-server.noma-system.svc:8443"),
+		Memory:    memory,
 	})
 	go rec.Run(ctx)
 

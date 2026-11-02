@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Builds Noma's images inside the dev cluster and rolls out noma-server.
 # make dev-up runs this; run it again (make deploy) after changing the code.
-# NOMA_CLAUDE=real puts the pinned Claude Code in the workspace image instead
-# of the fake one the tests use.
+# NOMA_CLAUDE=fake swaps the pinned Claude Code in the workspace image for
+# the fake one the e2e tests use.
 set -euo pipefail
 
 PROFILE="${NOMA_PROFILE:-noma}"
-CLAUDE="${NOMA_CLAUDE:-fake}"
+CLAUDE="${NOMA_CLAUDE:-real}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CERTS="${ROOT}/.dev/certs"
 kc() { kubectl --context "$PROFILE" "$@"; }
@@ -54,5 +54,9 @@ image noma-workspace "${ROOT}/build/workspace.Dockerfile" \
   "${out}/noma-agent" "${out}/fakeclaude" "${CERTS}/ca.crt" -- --build-opt="opt=build-arg:CLAUDE=${CLAUDE}"
 
 kc apply -f "${ROOT}/deploy/dev/rbac.yaml" -f "${ROOT}/deploy/dev/server.yaml"
+# Real Claude needs room for the Remote Control server and its sessions; the
+# fake one needs almost nothing, so tests can run several workspaces.
+if [ "$CLAUDE" = real ]; then memory=2Gi; else memory=256Mi; fi
+kc -n noma-system set env deployment/noma-server NOMA_WORKSPACE_MEMORY="$memory" >/dev/null
 kc -n noma-system rollout restart deployment/noma-server
 kc -n noma-system rollout status deployment/noma-server --timeout=120s
