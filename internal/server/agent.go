@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -121,7 +122,13 @@ func (a *AgentServer) config(w http.ResponseWriter, _ *http.Request, ws *store.W
 }
 
 // agentPhases are the phases an agent may report.
-var agentPhases = map[string]bool{api.PhaseCloning: true, api.PhaseReady: true, api.PhaseError: true}
+var agentPhases = map[string]bool{
+	api.PhaseCloning: true, api.PhaseClaude: true, api.PhaseSignIn: true,
+	api.PhaseReady: true, api.PhaseError: true,
+}
+
+// claudeLink is the only kind of link an agent may report.
+var claudeLink = regexp.MustCompile(`^https://claude\.ai/code\?environment=env_[A-Za-z0-9]+$`)
 
 func (a *AgentServer) status(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
 	var st api.AgentStatus
@@ -131,6 +138,16 @@ func (a *AgentServer) status(w http.ResponseWriter, r *http.Request, ws *store.W
 	}
 	if len(st.Message) > 500 {
 		st.Message = st.Message[:500]
+	}
+	if st.Link != "" {
+		if !claudeLink.MatchString(st.Link) {
+			writeError(w, http.StatusBadRequest, "invalid link")
+			return
+		}
+		if err := a.Store.SetLink(r.Context(), ws.ID, st.Link); err != nil {
+			internalError(w, err)
+			return
+		}
 	}
 	if err := a.Store.SetPhase(r.Context(), ws.ID, st.Phase, st.Message); err != nil {
 		internalError(w, err)

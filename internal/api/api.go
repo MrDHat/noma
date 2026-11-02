@@ -9,6 +9,8 @@ const (
 	PhasePending  = "pending"
 	PhaseStarting = "starting"
 	PhaseCloning  = "cloning"
+	PhaseClaude   = "starting-claude"
+	PhaseSignIn   = "sign-in"
 	PhaseReady    = "ready"
 	PhaseError    = "error"
 	PhaseDeleting = "deleting"
@@ -20,11 +22,13 @@ const TokenAudience = "noma"
 
 // Workspace is a workspace as the CLI sees it.
 type Workspace struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	RepoURL   string    `json:"repoUrl"`
-	Phase     string    `json:"phase"`
-	Message   string    `json:"message,omitempty"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	RepoURL string `json:"repoUrl"`
+	Phase   string `json:"phase"`
+	Message string `json:"message,omitempty"`
+	// Link opens the workspace's Claude session in claude.ai/code or the app.
+	Link      string    `json:"link,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -52,6 +56,8 @@ type AgentConfig struct {
 type AgentStatus struct {
 	Phase   string `json:"phase"`
 	Message string `json:"message,omitempty"`
+	// Link is the Remote Control link, sent with the ready phase.
+	Link string `json:"link,omitempty"`
 }
 
 // AgentMessage is one message from the server to the agent, returned by the

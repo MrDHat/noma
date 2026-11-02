@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Builds Noma's images, loads them into the dev cluster and rolls out
-# noma-server. make dev-up runs this; run it again (make deploy) after
-# changing the code.
+# Builds Noma's images inside the dev cluster and rolls out noma-server.
+# make dev-up runs this; run it again (make deploy) after changing the code.
+# NOMA_CLAUDE=real puts the pinned Claude Code in the workspace image instead
+# of the fake one the tests use.
 set -euo pipefail
 
 PROFILE="${NOMA_PROFILE:-noma}"
+CLAUDE="${NOMA_CLAUDE:-fake}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CERTS="${ROOT}/.dev/certs"
 kc() { kubectl --context "$PROFILE" "$@"; }
@@ -25,20 +27,31 @@ kc -n noma-system create secret tls noma-server-tls \
 
 out="${ROOT}/bin/linux-${goarch}"
 make -C "$ROOT" build GOOS=linux GOARCH="$goarch" BIN="$out"
+CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" go build -o "${out}/fakeclaude" "${ROOT}/test/fakeclaude"
 
-# image <name> <dockerfile> <files...>: builds from a context holding only the files.
+# image NAME DOCKERFILE FILE... [-- BUILD-OPT...] builds NAME:dev inside the
+# node, from a context holding only the given files.
 image() {
-  local name="$1" dockerfile="$2" ctx
-  shift 2
+  local name="$1" ctx
   ctx="$(mktemp -d)"
-  cp "$@" "$ctx/"
-  docker build -q --platform "linux/${goarch}" -t "${name}:dev" -f "$dockerfile" "$ctx" >/dev/null
+  cp "$2" "$ctx/Dockerfile"
+  shift 2
+  while [ $# -gt 0 ] && [ "$1" != "--" ]; do cp "$1" "$ctx/"; shift; done
+  [ $# -gt 0 ] && shift
+  # minikube exits 0 even when the build fails, so check that it named the image.
+  local log
+  log="$(minikube -p "$PROFILE" image build -t "${name}:dev" "$@" "$ctx" 2>&1)" || true
   rm -rf "$ctx"
-  minikube -p "$PROFILE" image load --overwrite "${name}:dev"
-  echo "loaded ${name}:dev"
+  if ! grep -q "naming to .*${name}:dev" <<<"$log"; then
+    echo "$log" >&2
+    echo "building ${name}:dev failed" >&2
+    exit 1
+  fi
+  echo "built ${name}:dev"
 }
 image noma-server "${ROOT}/build/server.Dockerfile" "${out}/noma-server"
-image noma-workspace "${ROOT}/build/workspace.Dockerfile" "${out}/noma-agent" "${CERTS}/ca.crt"
+image noma-workspace "${ROOT}/build/workspace.Dockerfile" \
+  "${out}/noma-agent" "${out}/fakeclaude" "${CERTS}/ca.crt" -- --build-opt="opt=build-arg:CLAUDE=${CLAUDE}"
 
 kc apply -f "${ROOT}/deploy/dev/rbac.yaml" -f "${ROOT}/deploy/dev/server.yaml"
 kc -n noma-system rollout restart deployment/noma-server

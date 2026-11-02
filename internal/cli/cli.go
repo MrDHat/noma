@@ -97,6 +97,7 @@ func waitReady(ctx context.Context, c *Client, name string, stdout io.Writer) er
 		}
 		switch ws.Phase {
 		case api.PhaseReady:
+			fmt.Fprintf(stdout, "\nWorkspace %s is ready. Open it in claude.ai/code or the Claude app:\n  %s\n", name, ws.Link)
 			return nil
 		case api.PhaseError:
 			return fmt.Errorf("workspace %s failed: %s", name, ws.Message)

@@ -144,6 +144,7 @@ func toAPI(ws *store.Workspace) api.Workspace {
 		RepoURL:   ws.RepoURL,
 		Phase:     ws.Phase,
 		Message:   ws.Message,
+		Link:      ws.Link,
 		CreatedAt: ws.CreatedAt,
 	}
 }
