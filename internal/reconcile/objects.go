@@ -65,10 +65,10 @@ func namespace(owner string) *corev1ac.NamespaceApplyConfiguration {
 }
 
 // networkPolicy denies all traffic to and from the user's workspaces except
-// DNS, noma-server and the public internet.
+// DNS, noma-server's agent API and the public internet.
 func networkPolicy(owner string) *networkingv1ac.NetworkPolicyApplyConfiguration {
 	udp, tcp := corev1.ProtocolUDP, corev1.ProtocolTCP
-	dns := intstr.FromInt32(53)
+	dns, agentAPI := intstr.FromInt32(53), intstr.FromInt32(8443)
 	return networkingv1ac.NetworkPolicy("workspaces", namespaceFor(owner)).
 		WithLabels(managedLabels(owner)).
 		WithSpec(networkingv1ac.NetworkPolicySpec().
@@ -85,7 +85,8 @@ func networkPolicy(owner string) *networkingv1ac.NetworkPolicyApplyConfiguration
 				networkingv1ac.NetworkPolicyEgressRule().
 					WithTo(networkingv1ac.NetworkPolicyPeer().
 						WithNamespaceSelector(metav1ac.LabelSelector().WithMatchLabels(map[string]string{"kubernetes.io/metadata.name": "noma-system"})).
-						WithPodSelector(metav1ac.LabelSelector().WithMatchLabels(map[string]string{"app": "noma-server"}))),
+						WithPodSelector(metav1ac.LabelSelector().WithMatchLabels(map[string]string{"app": "noma-server"}))).
+					WithPorts(networkingv1ac.NetworkPolicyPort().WithProtocol(tcp).WithPort(agentAPI)),
 				networkingv1ac.NetworkPolicyEgressRule().
 					WithTo(networkingv1ac.NetworkPolicyPeer().
 						WithIPBlock(networkingv1ac.IPBlock().
