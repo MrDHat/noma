@@ -18,8 +18,8 @@ JAR=${TLA2TOOLS:-.dev/tla2tools-$TLA_VERSION.jar}
 CHECKS=(
   "deletion|deletion.cfg|pass"
   "deletion-liveness|deletion-liveness.cfg|pass"
-  "agent-phase|agent-phase.cfg|fail AgentPhaseKept"
-  "stale-error|stale-error.cfg|fail ErrorClears"
+  "agent-phase|agent-phase.cfg|pass"
+  "stale-error|stale-error.cfg|pass"
   "rollout|rollout.cfg|pass"
 )
 

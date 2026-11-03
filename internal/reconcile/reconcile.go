@@ -147,16 +147,37 @@ func (r *Reconciler) ensure(ctx context.Context, ws *store.Workspace) error {
 	}
 	for _, step := range steps {
 		if err := step(); err != nil {
-			_ = r.Store.SetPhase(ctx, ws.ID, api.PhaseError, "could not create workspace objects")
+			// Once the agent has reported, its pod is running and its
+			// phase stays: a failed apply does not stop the workspace.
+			if reconcilerPhase(ws) {
+				_ = r.setPhase(ctx, ws, api.PhaseError, errObjects)
+			}
 			return err
 		}
 	}
 	return r.observe(ctx, ws)
 }
 
+// errObjects is the message of the error phase ensure sets.
+const errObjects = "could not create workspace objects"
+
+// reconcilerPhase reports whether ws's phase is one the reconciler set,
+// rather than one the agent reported.
+func reconcilerPhase(ws *store.Workspace) bool {
+	switch ws.Phase {
+	case api.PhasePending, api.PhaseStarting:
+		return true
+	case api.PhaseError:
+		return ws.Message == errObjects
+	}
+	return false
+}
+
 // observe records the workspace pod's state while it starts. Once the pod
-// runs, the agent reports the phase; observe only moves a workspace from
-// pending to starting then, so it never overwrites what the agent said.
+// runs, the agent reports the phase; observe then only replaces a phase the
+// reconciler set, such as an error from a failed apply that has since
+// succeeded. Every write is conditional on the row being as this pass read
+// it, so observe never overwrites what the agent reported in the meantime.
 func (r *Reconciler) observe(ctx context.Context, ws *store.Workspace) error {
 	pod, err := r.Kube.CoreV1().Pods(namespaceFor(ws.Owner)).Get(ctx, ws.ID+"-0", metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -173,17 +194,23 @@ func (r *Reconciler) observe(ctx context.Context, ws *store.Workspace) error {
 	if pod.Status.Phase != corev1.PodRunning {
 		return r.setStarting(ctx, ws, "pod "+string(pod.Status.Phase))
 	}
-	if ws.Phase == api.PhasePending || ws.Phase == api.PhaseStarting {
-		return r.Store.SetPhase(ctx, ws.ID, api.PhaseStarting, "starting agent", api.PhasePending, api.PhaseStarting)
+	if reconcilerPhase(ws) {
+		return r.setStarting(ctx, ws, "starting agent")
 	}
 	return nil
 }
 
 func (r *Reconciler) setStarting(ctx context.Context, ws *store.Workspace, msg string) error {
-	if ws.Phase == api.PhaseStarting && ws.Message == msg {
+	return r.setPhase(ctx, ws, api.PhaseStarting, msg)
+}
+
+// setPhase writes a phase unless ws already has it, and only if the row
+// has not changed since this pass read it.
+func (r *Reconciler) setPhase(ctx context.Context, ws *store.Workspace, phase, msg string) error {
+	if ws.Phase == phase && ws.Message == msg {
 		return nil
 	}
-	return r.Store.SetPhase(ctx, ws.ID, api.PhaseStarting, msg)
+	return r.Store.SetPhaseIfUnchanged(ctx, ws, phase, msg)
 }
 
 // remove deletes a workspace's objects, then its row once they are gone.

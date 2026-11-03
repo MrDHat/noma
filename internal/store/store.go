@@ -136,19 +136,26 @@ func (s *Store) SetLink(ctx context.Context, id, link string) error {
 }
 
 // SetPhase records a workspace's phase. It leaves rows that are being
-// deleted alone, so a late update can't undo a delete. With from set, it only
-// changes rows currently in one of those phases.
-func (s *Store) SetPhase(ctx context.Context, id, phase, message string, from ...string) error {
-	q := s.db.NewUpdate().Model((*Workspace)(nil)).
+// deleted alone, so a late update can't undo a delete.
+func (s *Store) SetPhase(ctx context.Context, id, phase, message string) error {
+	_, err := s.setPhase(phase, message).Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+	return err
+}
+
+// SetPhaseIfUnchanged is SetPhase for a row read earlier: it writes only if
+// nothing has changed the row's phase since, so the reconciler never
+// overwrites a phase it has not seen.
+func (s *Store) SetPhaseIfUnchanged(ctx context.Context, read *Workspace, phase, message string) error {
+	_, err := s.setPhase(phase, message).
+		Where("id = ? AND desired = ? AND updated_at = ?", read.ID, DesiredRunning, read.UpdatedAt).Exec(ctx)
+	return err
+}
+
+func (s *Store) setPhase(phase, message string) *bun.UpdateQuery {
+	return s.db.NewUpdate().Model((*Workspace)(nil)).
 		Set("phase = ?", phase).
 		Set("message = ?", message).
-		Set("updated_at = now()").
-		Where("id = ? AND desired = ?", id, DesiredRunning)
-	if len(from) > 0 {
-		q = q.Where("phase IN (?)", bun.List(from))
-	}
-	_, err := q.Exec(ctx)
-	return err
+		Set("updated_at = now()")
 }
 
 // ErrLocked is returned when another noma-server holds the reconcile lock.
