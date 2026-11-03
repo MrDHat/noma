@@ -1,6 +1,6 @@
 ---
 name: verify-workspace-lifecycle
-description: Model-check Noma's workspace lifecycle (create, reconcile, agent status, delete) with TLA+. Use when a change touches internal/reconcile/reconcile.go, internal/store/store.go's row writes, internal/server/server.go's create/delete handlers, internal/server/agent.go's status handler, the agent's status reports in internal/agent/agent.go or signin.go, or how many noma-server replicas run (deploy/dev/server.yaml). Also use to check a fix for one of the known findings below.
+description: Model-check Noma's workspace lifecycle (create, reconcile, agent status, delete) with TLA+. Use when a change touches internal/reconcile/reconcile.go, internal/store/store.go's row writes, internal/server/server.go's create/delete handlers, internal/server/agent.go's status handler, the agent's status reports in internal/agent/agent.go or signin.go, or how many noma-server replicas run (deploy/dev/server.yaml). Also use when CI's lifecycle sync check fails, or to check a fix for one of the known findings below.
 ---
 
 # Verify the workspace lifecycle
@@ -40,7 +40,7 @@ Each check has an expected result in `CHECKS` in `hack/verify-lifecycle.sh`. The
 
 A failing check prints the counterexample's steps by TLA+ action name. To read the path in plain words, run the pstack `/statechart` skill on `verify/lifecycle/WorkspaceLifecycle.tla` with that check's config. It shows the shortest path to each broken rule. When a check passes, `/statechart` draws a chart of how the workspace moves between states. Point it at the same TLC jar with the `TLA2TOOLS` environment variable.
 
-## Known findings at the sync commit
+## Known findings
 
 These are bugs in the code, not in the model. Do not weaken a property or the model to make them pass.
 
@@ -75,13 +75,21 @@ A change touches the verification when it does any of these:
 
 Comment-only changes and changes to the object specs (labels, security context, NetworkPolicy rules) do not.
 
-**Sync commit: `199c1a207f9932aafccf2fa8d70d8f274c537ebc`**. At this commit the model describes the code above. To see what changed since then:
+## Keeping it in step (CI enforces this)
+
+`verify/lifecycle/covered.sha256` holds the SHA-256 of every file in the coverage table, as of the last time someone confirmed the model matches them. The **sync commit** is the last commit that changed that file:
 
 ```bash
-git diff 199c1a207f9932aafccf2fa8d70d8f274c537ebc -- internal/store/store.go internal/server/server.go internal/server/agent.go internal/reconcile/reconcile.go internal/agent/agent.go internal/agent/signin.go deploy/dev/server.yaml
+git log -1 --format=%H -- verify/lifecycle/covered.sha256
 ```
 
-Move the sync commit forward only after you have read that diff and confirmed that the model describes the code at the new commit, with the model updated where needed. A passing run alone does not show that.
+CI runs `hack/lifecycle-sync.sh check` and `make verify-lifecycle` on every pull request and every push to `main`. The sync check fails when any covered file differs from its recorded hash, even for a change that doesn't touch the model, such as a comment or a NetworkPolicy rule. When it fails:
+
+1. Read what changed since the sync commit. The failing check prints the `git diff` command to run.
+2. Decide with the list above whether the change touches the model. If it does, update the model as described below and run `make verify-lifecycle`.
+3. Only once you have confirmed that the model describes the code as it is now, run `hack/lifecycle-sync.sh update` and commit `verify/lifecycle/covered.sha256` with your change. A passing TLC run alone does not show that the model matches the code, so don't run `update` just to make CI green.
+
+To cover a new file, add a line for it to `covered.sha256` (any hash) and to the coverage table, then run `update`.
 
 ## Updating the model for an intended change
 
