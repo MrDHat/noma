@@ -3,7 +3,7 @@ LDFLAGS := -s -w -X github.com/MrDHat/noma/internal/version.Version=$(VERSION)
 BINARIES := noma noma-server noma-agent
 BIN ?= bin
 
-.PHONY: build test lint fmt dev-up dev-down deploy e2e demo-real
+.PHONY: build test lint fmt dev-up dev-down deploy e2e demo-real verify-lifecycle
 
 build:
 	@mkdir -p $(BIN)
@@ -34,3 +34,6 @@ demo-real:
 
 e2e:
 	go test -tags e2e -count=1 -v ./test/e2e/...
+
+verify-lifecycle:
+	hack/verify-lifecycle.sh
