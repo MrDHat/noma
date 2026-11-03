@@ -26,8 +26,16 @@ func TestWorkspaceObjects(t *testing.T) {
 	if phase := kubectl(t, "-n", userNamespace, "get", "pvc", ws.ID, "-o", "jsonpath={.status.phase}"); phase != "Bound" {
 		t.Errorf("volume phase = %q, want Bound", phase)
 	}
-	kubectl(t, "-n", userNamespace, "get", "networkpolicy", "workspaces")
 	kubectl(t, "-n", userNamespace, "get", "serviceaccount", ws.ID)
+
+	// The workspace may reach noma-server's agent API, but not the CLI API.
+	for port, want := range map[string]bool{"8443": true, "8080": false} {
+		_, err := exec.Command("kubectl", "--context", kubeContext(), "-n", userNamespace, "exec", pod, "--",
+			"timeout", "5", "bash", "-c", "exec 3<>/dev/tcp/noma-server.noma-system.svc/"+port).CombinedOutput()
+		if got := err == nil; got != want {
+			t.Errorf("connect to noma-server:%s from the workspace = %v, want %v", port, got, want)
+		}
+	}
 
 	mustNoma(t, "rm", "e2e-objects")
 	for _, obj := range []string{"statefulset/" + ws.ID, "pvc/" + ws.ID, "serviceaccount/" + ws.ID, "pod/" + pod} {
