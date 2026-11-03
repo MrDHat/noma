@@ -34,18 +34,15 @@ Each check has an expected result in `CHECKS` in `hack/verify-lifecycle.sh`. The
 | --- | --- | --- | --- | --- | --- |
 | `deletion` | `deletion.cfg` | 1 | yes | 1 | pass: `TypeOK`, `DeleteIsFinal`, `NoOrphans`, `NoUndelete` |
 | `deletion-liveness` | `deletion-liveness.cfg` | 1 | no | 1 | pass: `DeletedGoesAway` (weak fairness on passes and controllers) |
-| `agent-phase` | `agent-phase.cfg` | 1 | no | 1 | fail `AgentPhaseKept`: finding 2 |
-| `stale-error` | `stale-error.cfg` | 1 | yes | 0 | fail `ErrorClears`: finding 1 |
+| `agent-phase` | `agent-phase.cfg` | 1 | yes | 1 | pass: `AgentPhaseKept` |
+| `stale-error` | `stale-error.cfg` | 1 | yes | 0 | pass: `ErrorClears` |
 | `rollout` | `rollout.cfg` | 2 | no | 0 | pass: `NoOrphans` with the reconcile lock |
 
 A failing check prints the counterexample's steps by TLA+ action name. To read the path in plain words, run the pstack `/statechart` skill on `verify/lifecycle/WorkspaceLifecycle.tla` with that check's config. It shows the shortest path to each broken rule. When a check passes, `/statechart` draws a chart of how the workspace moves between states. Point it at the same TLC jar with the `TLA2TOOLS` environment variable.
 
 ## Known findings
 
-These are bugs in the code, not in the model. Do not weaken a property or the model to make them pass.
-
-1. **One failed Kubernetes apply leaves a running workspace in `error`** (`stale-error`). `ensure` calls `SetPhase(error, "could not create workspace objects")` when any apply fails. On the next pass the applies succeed, but `observe` only rewrites `pending` or `starting` once the pod runs. The phase stays `error` until the agent next reports. On a workspace that is already `ready`, that is only when Claude restarts. The script's trace shows the shorter case, where the error comes during creation. The `ready` case is also reachable: once the agent reports `ready`, one failed apply leaves `error` with nothing left to report.
-2. **`observe` can overwrite the agent's phase** (`agent-phase`). The pass reads the pod with `Pods().Get` while it is missing, creating or crash-looping. Before the pass's `SetPhase(starting, …)` lands, the pod starts and the agent reports `cloning`. `setStarting`'s write has no `from` guard, so it replaces `cloning` with `starting`. The window is the time between one Get and one UPDATE, so this is rare. Its worst case is overwriting `sign-in`, which hides the sign-in prompt from `noma up` until the agent's 15-minute sign-in timeout.
+None: every check passes. A new finding is a bug in the code, not in the model. List it here with its path, and give its check the expected result `fail <Property>` in `CHECKS`. Do not weaken a property or the model to make it pass.
 
 When a fix lands, mirror it in the model. The check should then pass. Change its expected result in `CHECKS` to `pass`, and remove the finding from this list.
 
@@ -55,9 +52,9 @@ Coverage, with the model operators that stand for each piece of code:
 
 | Code | Model |
 | --- | --- |
-| `internal/store/store.go`: `SetPhase`, `MarkDeleted`, `DeleteWorkspace`, `CreateWorkspace`, `Workspaces`, `WithReconcileLock` | `SetPhase`, `ApiDelete`, `RecDeleteRow`, `ApiCreate`, `RecStartPass`, `RecLock`/`RecUnlock` |
+| `internal/store/store.go`: `SetPhase`, `SetPhaseIfUnchanged`, `MarkDeleted`, `DeleteWorkspace`, `CreateWorkspace`, `Workspaces`, `WithReconcileLock` | `SetPhase`, `SetPhaseIfUnchanged` (`changed` stands for `updated_at`), `ApiDelete`, `RecDeleteRow`, `ApiCreate`, `RecStartPass`, `RecLock`/`RecUnlock` |
 | `internal/server/server.go`: `createWorkspace`/`insertWorkspace`, `deleteWorkspace` | `ApiCreate`, `ApiDelete` |
-| `internal/reconcile/reconcile.go`: `Run`, `pass`, `ensure`, `observe`, `setStarting`, `remove`, `gone` | `RecLock` … `RecDeleteRow`, `SetStarting` |
+| `internal/reconcile/reconcile.go`: `Run`, `pass`, `ensure`, `reconcilerPhase`, `observe`, `setStarting`, `setPhase`, `remove`, `gone` | `RecLock` … `RecDeleteRow`, `ReconcilerPhase`, `RecWrite` |
 | `internal/server/agent.go`: `workspaceForToken`, `status` | `AgentSend` (auth read), `AgentLand` (`SetPhase`) |
 | `internal/agent/agent.go`: `Run`, `setup`, `superviseClaude`, `report`; `signin.go`: `signIn`'s sign-in report | `StartReports`, `AgentSend` |
 | `internal/reconcile/objects.go`: the pod's ServiceAccount, PVC claim and `HOME` on the volume | `PodCreate`, `PodStart`, `PVCFinalize`, `cloned`/`loggedIn` |
@@ -66,7 +63,7 @@ Coverage, with the model operators that stand for each piece of code:
 A change touches the verification when it does any of these:
 
 - adds, removes, reorders or merges a SQL write or Kubernetes call in that code;
-- changes a `WHERE` guard;
+- changes a `WHERE` guard, or what sets `updated_at`;
 - changes which phases the agent reports, or in what order;
 - changes what `observe` writes;
 - adds a new writer of the `workspaces` row, such as a new handler or a background job;
@@ -115,7 +112,8 @@ Not covered:
 - the namespace and NetworkPolicy, which are per owner and never deleted;
 - `SetSignIn` and `SetLink`, which the model folds into `AgentLand`'s `SetPhase` (each has the same `desired = running` guard);
 - the sign-in code relay (`server.signIn`, `AgentServer.Send`);
-- the agent's own `error` reports;
+- the agent's own `error` reports. The reconciler tells them from its own error by the message, so the agent must never report `could not create workspace objects`;
+- two phase writes in the same microsecond, which leave `updated_at` equal, so `SetPhaseIfUnchanged` cannot tell them apart;
 - Postgres or Kubernetes losing writes;
 - informer delays: a pass may start at any time, which covers the wake channel, the retry timer and the 5-minute ticker;
 - a replica that fails to take the reconcile lock, which skips the pass and changes nothing;

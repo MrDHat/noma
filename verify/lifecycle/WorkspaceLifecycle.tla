@@ -18,7 +18,7 @@ None == "none"
 \* An absent row, and a reconciler with no write to send. TLC cannot compare
 \* a record with a string, so these are records too.
 NoRow == [exists |-> FALSE, desired |-> "none", phase |-> "none", msg |-> ""]
-NoWrite == [ph |-> "none", msg |-> "", from |-> {}]
+NoWrite == [ph |-> "none", msg |-> ""]
 
 \* api.Phase* in internal/api/api.go
 AgentPhases == {"cloning", "starting-claude", "sign-in", "ready"}
@@ -42,10 +42,11 @@ VARIABLES
     snap,      \* the row as that reconciler's pass read it
     rwrite,    \* the SetPhase that reconciler is about to send
     applyFailed, \* ghost: the latest ensure failed to apply an object
-    lock       \* the reconciler holding the reconcile lock, or None
+    lock,      \* the reconciler holding the reconcile lock, or None
+    changed    \* for each reconciler, the row's updated_at has moved since its pass read it
 
 vars == <<row, created, sa, sts, pvc, pod, crashes, cloned, loggedIn, todo,
-          inc, inflight, landed, rpc, snap, rwrite, applyFailed, lock>>
+          inc, inflight, landed, rpc, snap, rwrite, applyFailed, lock, changed>>
 
 RPCs == {"idle", "read", "unlock", "applySA", "applyPVC", "applySTS", "setError", "getPod",
          "setPhase", "delSTS", "delPVC", "delSA", "goneGetPod",
@@ -60,12 +61,18 @@ TypeOK ==
     /\ rpc \in [Reconcilers -> RPCs]
     /\ lock \in Reconcilers \cup {None}
 
-\* store.SetPhase: UPDATE ... WHERE id = ? AND desired = 'running'
-\* [AND phase IN (from)]. One statement, so one step.
-SetPhase(ph, m, from) ==
-    IF row.exists /\ row.desired = "running" /\ (from = {} \/ row.phase \in from)
-    THEN [row EXCEPT !.phase = ph, !.msg = m]
-    ELSE row
+\* store.SetPhase: UPDATE ... SET updated_at = now() WHERE id = ? AND
+\* desired = 'running'. SetPhaseIfUnchanged adds AND updated_at = ? from the
+\* row the pass read: no write has landed since. One statement, so one step.
+\* updated_at is a timestamp, so `changed` stands for it: every write to the
+\* phase moves it for all reconcilers, and a pass's read clears it.
+SetPhaseWhere(ph, m, guard) ==
+    IF row.exists /\ row.desired = "running" /\ guard
+    THEN /\ row' = [row EXCEPT !.phase = ph, !.msg = m]
+         /\ changed' = [r \in Reconcilers |-> TRUE]
+    ELSE UNCHANGED <<row, changed>>
+SetPhase(ph, m) == SetPhaseWhere(ph, m, TRUE)
+SetPhaseIfUnchanged(r, ph, m) == SetPhaseWhere(ph, m, ~changed[r])
 
 \* What noma-agent reports after it starts (agent.Run, setup,
 \* superviseClaude, waitForLogin). The clone and login live on the volume, so
@@ -87,6 +94,7 @@ Init ==
     /\ rwrite = [r \in Reconcilers |-> NoWrite]
     /\ applyFailed = FALSE
     /\ lock = None
+    /\ changed = [r \in Reconcilers |-> FALSE]
 
 -----------------------------------------------------------------------------
 \* CLI API: internal/server/server.go
@@ -97,12 +105,13 @@ ApiCreate ==
     /\ created' = TRUE
     /\ row' = [exists |-> TRUE, desired |-> "running", phase |-> "pending", msg |-> ""]
     /\ UNCHANGED <<sa, sts, pvc, pod, crashes, cloned, loggedIn, todo, inc,
-                   inflight, landed, rpc, snap, rwrite, applyFailed, lock>>
+                   inflight, landed, rpc, snap, rwrite, applyFailed, lock, changed>>
 
 \* deleteWorkspace -> store.MarkDeleted
 ApiDelete ==
     /\ row.exists /\ row.desired = "running"
     /\ row' = [row EXCEPT !.desired = "deleted", !.phase = "deleting", !.msg = ""]
+    /\ changed' = [r \in Reconcilers |-> TRUE]
     /\ UNCHANGED <<created, sa, sts, pvc, pod, crashes, cloned, loggedIn, todo,
                    inc, inflight, landed, rpc, snap, rwrite, applyFailed, lock>>
 
@@ -126,17 +135,28 @@ RecLock(r) ==
     /\ lock' = r
     /\ Go(r, "read")
     /\ UNCHANGED <<row, KubeVars, snap, rwrite, created, pod, crashes, cloned,
-                   loggedIn, todo, inc, inflight, landed, applyFailed>>
+                   loggedIn, todo, inc, inflight, landed, applyFailed, changed>>
 
 \* pass: store.Workspaces reads every row in one SELECT. With no row there is
 \* nothing to do.
 RecStartPass(r) ==
     /\ rpc[r] = "read"
     /\ snap' = [snap EXCEPT ![r] = row]
+    /\ changed' = [changed EXCEPT ![r] = FALSE]
     /\ Go(r, CASE ~row.exists              -> "unlock"
                 [] row.desired = "deleted" -> "delSTS"
                 [] OTHER                   -> "applySA")
     /\ UNCHANGED <<row, KubeVars, rwrite>> /\ RecUnchanged
+
+\* reconcilerPhase: a phase the reconciler set, not one the agent reported.
+ErrObjects == "could not create workspace objects"
+ReconcilerPhase(s) ==
+    \/ s.phase \in {"pending", "starting"}
+    \/ s.phase = "error" /\ s.msg = ErrObjects
+
+\* Reconciler.setPhase: no write when the snapshot already says it.
+RecWrite(r, ph, m) ==
+    IF snap[r].phase = ph /\ snap[r].msg = m THEN NoWrite ELSE [ph |-> ph, msg |-> m]
 
 \* WithReconcileLock: ROLLBACK once the pass is over frees the lock.
 RecUnlock(r) ==
@@ -144,10 +164,10 @@ RecUnlock(r) ==
     /\ lock' = None
     /\ Go(r, "idle")
     /\ UNCHANGED <<row, KubeVars, snap, rwrite, created, pod, crashes, cloned,
-                   loggedIn, todo, inc, inflight, landed, applyFailed>>
+                   loggedIn, todo, inc, inflight, landed, applyFailed, changed>>
 
-\* ensure: each server-side apply is one API call. A failed one goes to
-\* SetPhase(error) and ends the pass. Namespace and NetworkPolicy are per
+\* ensure: each server-side apply is one API call. A failed one ends the
+\* pass, after setPhase(error) if the snapshot's phase is the reconciler's. Namespace and NetworkPolicy are per
 \* owner and never deleted, so the model leaves them out.
 RecApply(r, from, to, effect) ==
     /\ rpc[r] = from
@@ -155,10 +175,11 @@ RecApply(r, from, to, effect) ==
           /\ Go(r, to)
           /\ applyFailed' = (applyFailed /\ to # "getPod")
        \/ /\ KubeCanFail
-          /\ Go(r, "setError")
+          /\ LET w == RecWrite(r, "error", ErrObjects)
+             IN Go(r, IF ReconcilerPhase(snap[r]) /\ w # NoWrite THEN "setError" ELSE "unlock")
           /\ applyFailed' = TRUE
           /\ UNCHANGED KubeVars
-    /\ UNCHANGED <<row, snap, rwrite>> /\ ApplyUnchanged
+    /\ UNCHANGED <<row, snap, rwrite, changed>> /\ ApplyUnchanged
 
 RecApplySA(r) == RecApply(r, "applySA", "applyPVC", sa' = TRUE /\ UNCHANGED <<sts, pvc>>)
 \* Applying to a terminating PVC does not bring it back.
@@ -166,39 +187,33 @@ RecApplyPVC(r) == RecApply(r, "applyPVC", "applySTS",
     pvc' = (IF pvc = "none" THEN "bound" ELSE pvc) /\ UNCHANGED <<sa, sts>>)
 RecApplySTS(r) == RecApply(r, "applySTS", "getPod", sts' = TRUE /\ UNCHANGED <<sa, pvc>>)
 
-\* ensure: SetPhase(ctx, ws.ID, api.PhaseError, "could not create workspace objects")
+\* ensure: setPhase(ctx, ws, api.PhaseError, errObjects)
 RecSetError(r) ==
     /\ rpc[r] = "setError"
-    /\ row' = SetPhase("error", "could not create workspace objects", {})
+    /\ SetPhaseIfUnchanged(r, "error", ErrObjects)
     /\ Go(r, "unlock")
     /\ UNCHANGED <<KubeVars, snap, rwrite>> /\ RecUnchanged
-
-\* setStarting: skip the write when the snapshot already says it.
-SetStarting(r, m) ==
-    IF snap[r].phase = "starting" /\ snap[r].msg = m
-    THEN NoWrite
-    ELSE [ph |-> "starting", msg |-> m, from |-> {}]
 
 \* observe: one Pods().Get, then a decision on what it returned and on the
 \* pass's snapshot. A creating pod is Pending with reason ContainerCreating,
 \* which observe skips, so it reports "pod Pending".
 RecGetPod(r) ==
     /\ rpc[r] = "getPod"
-    /\ LET w == CASE pod = "none"     -> SetStarting(r, "creating pod")
-                  [] pod = "crashing" -> SetStarting(r, "CrashLoopBackOff")
-                  [] pod = "creating" -> SetStarting(r, "pod Pending")
+    /\ LET w == CASE pod = "none"     -> RecWrite(r, "starting", "creating pod")
+                  [] pod = "crashing" -> RecWrite(r, "starting", "CrashLoopBackOff")
+                  [] pod = "creating" -> RecWrite(r, "starting", "pod Pending")
                   [] pod = "running"  ->
-                       IF snap[r].phase \in {"pending", "starting"}
-                       THEN [ph |-> "starting", msg |-> "starting agent",
-                             from |-> {"pending", "starting"}]
+                       IF ReconcilerPhase(snap[r])
+                       THEN RecWrite(r, "starting", "starting agent")
                        ELSE NoWrite
        IN /\ rwrite' = [rwrite EXCEPT ![r] = w]
           /\ Go(r, IF w = NoWrite THEN "unlock" ELSE "setPhase")
-    /\ UNCHANGED <<row, KubeVars, snap>> /\ RecUnchanged
+    /\ UNCHANGED <<row, KubeVars, snap, changed>> /\ RecUnchanged
 
+\* setStarting -> setPhase -> store.SetPhaseIfUnchanged
 RecSetPhase(r) ==
     /\ rpc[r] = "setPhase"
-    /\ row' = SetPhase(rwrite[r].ph, rwrite[r].msg, rwrite[r].from)
+    /\ SetPhaseIfUnchanged(r, rwrite[r].ph, rwrite[r].msg)
     /\ Go(r, "unlock")
     /\ rwrite' = [rwrite EXCEPT ![r] = NoWrite]
     /\ UNCHANGED <<KubeVars, snap>> /\ RecUnchanged
@@ -209,7 +224,7 @@ RecDelete(r, from, to, effect) ==
     /\ rpc[r] = from
     /\ \/ effect /\ Go(r, to)
        \/ KubeCanFail /\ Go(r, "unlock") /\ UNCHANGED KubeVars
-    /\ UNCHANGED <<row, snap, rwrite>> /\ RecUnchanged
+    /\ UNCHANGED <<row, snap, rwrite, changed>> /\ RecUnchanged
 
 RecDelSTS(r) == RecDelete(r, "delSTS", "delPVC", sts' = FALSE /\ UNCHANGED <<sa, pvc>>)
 RecDelPVC(r) == RecDelete(r, "delPVC", "delSA",
@@ -221,19 +236,19 @@ RecDelSA(r) == RecDelete(r, "delSA", "goneGetPod", sa' = FALSE /\ UNCHANGED <<st
 RecGoneGetPod(r) ==
     /\ rpc[r] = "goneGetPod"
     /\ Go(r, IF pod = "none" THEN "goneGetPVC" ELSE "unlock")
-    /\ UNCHANGED <<row, KubeVars, snap, rwrite>> /\ RecUnchanged
+    /\ UNCHANGED <<row, KubeVars, snap, rwrite, changed>> /\ RecUnchanged
 
 RecGoneGetPVC(r) ==
     /\ rpc[r] = "goneGetPVC"
     /\ Go(r, IF pvc = "none" THEN "deleteRow" ELSE "unlock")
-    /\ UNCHANGED <<row, KubeVars, snap, rwrite>> /\ RecUnchanged
+    /\ UNCHANGED <<row, KubeVars, snap, rwrite, changed>> /\ RecUnchanged
 
 \* remove -> store.DeleteWorkspace: DELETE WHERE id = ?, no other guard.
 RecDeleteRow(r) ==
     /\ rpc[r] = "deleteRow"
     /\ row' = NoRow
     /\ Go(r, "unlock")
-    /\ UNCHANGED <<KubeVars, snap, rwrite>> /\ RecUnchanged
+    /\ UNCHANGED <<KubeVars, snap, rwrite, changed>> /\ RecUnchanged
 
 Reconcile(r) ==
     \/ RecLock(r) \/ RecStartPass(r) \/ RecUnlock(r) \/ RecApplySA(r) \/ RecApplyPVC(r) \/ RecApplySTS(r)
@@ -244,7 +259,7 @@ Reconcile(r) ==
 -----------------------------------------------------------------------------
 \* Kubernetes controllers and the kubelet.
 
-KubeUnchanged == UNCHANGED <<row, created, rpc, snap, rwrite, applyFailed, lock>>
+KubeUnchanged == UNCHANGED <<row, created, rpc, snap, rwrite, applyFailed, lock, changed>>
 
 \* The StatefulSet controller creates pod <id>-0. Admission needs the
 \* ServiceAccount the pod names.
@@ -319,14 +334,14 @@ AgentSend ==
     /\ cloned' = (cloned \/ Head(todo) = "starting-claude")
     /\ loggedIn' = (loggedIn \/ Head(todo) = "ready")
     /\ UNCHANGED <<row, created, sa, sts, pvc, pod, crashes, inc, landed, rpc, snap,
-                   rwrite, applyFailed, lock>>
+                   rwrite, applyFailed, lock, changed>>
 
 \* AgentServer.status: SetSignIn, SetLink and SetPhase, each guarded by
 \* desired = running. Only SetPhase moves the phase, so the model writes
 \* just that one.
 AgentLand ==
     \E m \in inflight :
-        /\ row' = SetPhase(m.ph, "", {})
+        /\ SetPhase(m.ph, "")
         /\ inflight' = inflight \ {m}
         /\ landed' = IF row.exists /\ row.desired = "running" /\ pod = "running"
                       THEN m.ph ELSE landed
