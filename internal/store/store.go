@@ -151,6 +151,34 @@ func (s *Store) SetPhase(ctx context.Context, id, phase, message string, from ..
 	return err
 }
 
+// ErrLocked is returned when another noma-server holds the reconcile lock.
+var ErrLocked = errors.New("another noma-server is reconciling")
+
+// reconcileLock is the key of the Postgres advisory lock that reconcile
+// passes hold. It spells "noma".
+const reconcileLock = 0x6e6f6d61
+
+// WithReconcileLock runs fn while it holds the reconcile lock, so passes on
+// different noma-server replicas never overlap. If another replica holds the
+// lock, it returns ErrLocked without running fn. The lock belongs to a
+// transaction that does nothing else, so Postgres frees it when fn returns,
+// ctx ends or the connection drops.
+func (s *Store) WithReconcileLock(ctx context.Context, fn func() error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var locked bool
+	if err := tx.QueryRowContext(ctx, "SELECT pg_try_advisory_xact_lock(?)", reconcileLock).Scan(&locked); err != nil {
+		return fmt.Errorf("take reconcile lock: %w", err)
+	}
+	if !locked {
+		return ErrLocked
+	}
+	return fn()
+}
+
 // WorkspaceByID returns the workspace with the given ID.
 func (s *Store) WorkspaceByID(ctx context.Context, id string) (*Workspace, error) {
 	w := new(Workspace)

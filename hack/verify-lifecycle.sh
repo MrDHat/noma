@@ -20,7 +20,7 @@ CHECKS=(
   "deletion-liveness|deletion-liveness.cfg|pass"
   "agent-phase|agent-phase.cfg|fail AgentPhaseKept"
   "stale-error|stale-error.cfg|fail ErrorClears"
-  "rollout|rollout.cfg|fail NoOrphans"
+  "rollout|rollout.cfg|pass"
 )
 
 command -v java >/dev/null || { echo "verify-lifecycle: needs Java 11 or later on PATH" >&2; exit 1; }
