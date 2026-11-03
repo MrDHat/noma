@@ -41,12 +41,13 @@ VARIABLES
     rpc,       \* each reconciler's place in reconcile.pass
     snap,      \* the row as that reconciler's pass read it
     rwrite,    \* the SetPhase that reconciler is about to send
-    applyFailed \* ghost: the latest ensure failed to apply an object
+    applyFailed, \* ghost: the latest ensure failed to apply an object
+    lock       \* the reconciler holding the reconcile lock, or None
 
 vars == <<row, created, sa, sts, pvc, pod, crashes, cloned, loggedIn, todo,
-          inc, inflight, landed, rpc, snap, rwrite, applyFailed>>
+          inc, inflight, landed, rpc, snap, rwrite, applyFailed, lock>>
 
-RPCs == {"idle", "applySA", "applyPVC", "applySTS", "setError", "getPod",
+RPCs == {"idle", "read", "unlock", "applySA", "applyPVC", "applySTS", "setError", "getPod",
          "setPhase", "delSTS", "delPVC", "delSA", "goneGetPod",
          "goneGetPVC", "deleteRow"}
 
@@ -57,6 +58,7 @@ TypeOK ==
     /\ pvc \in {"none", "bound", "terminating"}
     /\ pod \in {"none", "creating", "running", "crashing"}
     /\ rpc \in [Reconcilers -> RPCs]
+    /\ lock \in Reconcilers \cup {None}
 
 \* store.SetPhase: UPDATE ... WHERE id = ? AND desired = 'running'
 \* [AND phase IN (from)]. One statement, so one step.
@@ -84,6 +86,7 @@ Init ==
     /\ snap = [r \in Reconcilers |-> NoRow]
     /\ rwrite = [r \in Reconcilers |-> NoWrite]
     /\ applyFailed = FALSE
+    /\ lock = None
 
 -----------------------------------------------------------------------------
 \* CLI API: internal/server/server.go
@@ -94,14 +97,14 @@ ApiCreate ==
     /\ created' = TRUE
     /\ row' = [exists |-> TRUE, desired |-> "running", phase |-> "pending", msg |-> ""]
     /\ UNCHANGED <<sa, sts, pvc, pod, crashes, cloned, loggedIn, todo, inc,
-                   inflight, landed, rpc, snap, rwrite, applyFailed>>
+                   inflight, landed, rpc, snap, rwrite, applyFailed, lock>>
 
 \* deleteWorkspace -> store.MarkDeleted
 ApiDelete ==
     /\ row.exists /\ row.desired = "running"
     /\ row' = [row EXCEPT !.desired = "deleted", !.phase = "deleting", !.msg = ""]
     /\ UNCHANGED <<created, sa, sts, pvc, pod, crashes, cloned, loggedIn, todo,
-                   inc, inflight, landed, rpc, snap, rwrite, applyFailed>>
+                   inc, inflight, landed, rpc, snap, rwrite, applyFailed, lock>>
 
 -----------------------------------------------------------------------------
 \* Reconciler: internal/reconcile/reconcile.go. rpc[r] is where reconciler
@@ -112,15 +115,36 @@ Go(r, pc) == rpc' = [rpc EXCEPT ![r] = pc]
 
 KubeVars == <<sa, sts, pvc>>
 ApplyUnchanged == UNCHANGED <<created, pod, crashes, cloned, loggedIn, todo, inc,
-                              inflight, landed>>
+                              inflight, landed, lock>>
 RecUnchanged == ApplyUnchanged /\ UNCHANGED applyFailed
 
-\* pass: store.Workspaces reads every row in one SELECT.
+\* pass -> store.WithReconcileLock: BEGIN, then pg_try_advisory_xact_lock.
+\* A replica that finds the lock taken skips the pass and retries later,
+\* which changes nothing, so the model only has the attempt that wins.
+RecLock(r) ==
+    /\ rpc[r] = "idle" /\ lock = None
+    /\ lock' = r
+    /\ Go(r, "read")
+    /\ UNCHANGED <<row, KubeVars, snap, rwrite, created, pod, crashes, cloned,
+                   loggedIn, todo, inc, inflight, landed, applyFailed>>
+
+\* pass: store.Workspaces reads every row in one SELECT. With no row there is
+\* nothing to do.
 RecStartPass(r) ==
-    /\ rpc[r] = "idle" /\ row.exists
+    /\ rpc[r] = "read"
     /\ snap' = [snap EXCEPT ![r] = row]
-    /\ Go(r, IF row.desired = "deleted" THEN "delSTS" ELSE "applySA")
+    /\ Go(r, CASE ~row.exists              -> "unlock"
+                [] row.desired = "deleted" -> "delSTS"
+                [] OTHER                   -> "applySA")
     /\ UNCHANGED <<row, KubeVars, rwrite>> /\ RecUnchanged
+
+\* WithReconcileLock: ROLLBACK once the pass is over frees the lock.
+RecUnlock(r) ==
+    /\ rpc[r] = "unlock"
+    /\ lock' = None
+    /\ Go(r, "idle")
+    /\ UNCHANGED <<row, KubeVars, snap, rwrite, created, pod, crashes, cloned,
+                   loggedIn, todo, inc, inflight, landed, applyFailed>>
 
 \* ensure: each server-side apply is one API call. A failed one goes to
 \* SetPhase(error) and ends the pass. Namespace and NetworkPolicy are per
@@ -146,7 +170,7 @@ RecApplySTS(r) == RecApply(r, "applySTS", "getPod", sts' = TRUE /\ UNCHANGED <<s
 RecSetError(r) ==
     /\ rpc[r] = "setError"
     /\ row' = SetPhase("error", "could not create workspace objects", {})
-    /\ Go(r, "idle")
+    /\ Go(r, "unlock")
     /\ UNCHANGED <<KubeVars, snap, rwrite>> /\ RecUnchanged
 
 \* setStarting: skip the write when the snapshot already says it.
@@ -169,13 +193,13 @@ RecGetPod(r) ==
                              from |-> {"pending", "starting"}]
                        ELSE NoWrite
        IN /\ rwrite' = [rwrite EXCEPT ![r] = w]
-          /\ Go(r, IF w = NoWrite THEN "idle" ELSE "setPhase")
+          /\ Go(r, IF w = NoWrite THEN "unlock" ELSE "setPhase")
     /\ UNCHANGED <<row, KubeVars, snap>> /\ RecUnchanged
 
 RecSetPhase(r) ==
     /\ rpc[r] = "setPhase"
     /\ row' = SetPhase(rwrite[r].ph, rwrite[r].msg, rwrite[r].from)
-    /\ Go(r, "idle")
+    /\ Go(r, "unlock")
     /\ rwrite' = [rwrite EXCEPT ![r] = NoWrite]
     /\ UNCHANGED <<KubeVars, snap>> /\ RecUnchanged
 
@@ -184,7 +208,7 @@ RecSetPhase(r) ==
 RecDelete(r, from, to, effect) ==
     /\ rpc[r] = from
     /\ \/ effect /\ Go(r, to)
-       \/ KubeCanFail /\ Go(r, "idle") /\ UNCHANGED KubeVars
+       \/ KubeCanFail /\ Go(r, "unlock") /\ UNCHANGED KubeVars
     /\ UNCHANGED <<row, snap, rwrite>> /\ RecUnchanged
 
 RecDelSTS(r) == RecDelete(r, "delSTS", "delPVC", sts' = FALSE /\ UNCHANGED <<sa, pvc>>)
@@ -196,23 +220,23 @@ RecDelSA(r) == RecDelete(r, "delSA", "goneGetPod", sa' = FALSE /\ UNCHANGED <<st
 \* found ends the pass; an informer event wakes the next.
 RecGoneGetPod(r) ==
     /\ rpc[r] = "goneGetPod"
-    /\ Go(r, IF pod = "none" THEN "goneGetPVC" ELSE "idle")
+    /\ Go(r, IF pod = "none" THEN "goneGetPVC" ELSE "unlock")
     /\ UNCHANGED <<row, KubeVars, snap, rwrite>> /\ RecUnchanged
 
 RecGoneGetPVC(r) ==
     /\ rpc[r] = "goneGetPVC"
-    /\ Go(r, IF pvc = "none" THEN "deleteRow" ELSE "idle")
+    /\ Go(r, IF pvc = "none" THEN "deleteRow" ELSE "unlock")
     /\ UNCHANGED <<row, KubeVars, snap, rwrite>> /\ RecUnchanged
 
 \* remove -> store.DeleteWorkspace: DELETE WHERE id = ?, no other guard.
 RecDeleteRow(r) ==
     /\ rpc[r] = "deleteRow"
     /\ row' = NoRow
-    /\ Go(r, "idle")
+    /\ Go(r, "unlock")
     /\ UNCHANGED <<KubeVars, snap, rwrite>> /\ RecUnchanged
 
 Reconcile(r) ==
-    \/ RecStartPass(r) \/ RecApplySA(r) \/ RecApplyPVC(r) \/ RecApplySTS(r)
+    \/ RecLock(r) \/ RecStartPass(r) \/ RecUnlock(r) \/ RecApplySA(r) \/ RecApplyPVC(r) \/ RecApplySTS(r)
     \/ RecSetError(r) \/ RecGetPod(r) \/ RecSetPhase(r)
     \/ RecDelSTS(r) \/ RecDelPVC(r) \/ RecDelSA(r)
     \/ RecGoneGetPod(r) \/ RecGoneGetPVC(r) \/ RecDeleteRow(r)
@@ -220,7 +244,7 @@ Reconcile(r) ==
 -----------------------------------------------------------------------------
 \* Kubernetes controllers and the kubelet.
 
-KubeUnchanged == UNCHANGED <<row, created, rpc, snap, rwrite, applyFailed>>
+KubeUnchanged == UNCHANGED <<row, created, rpc, snap, rwrite, applyFailed, lock>>
 
 \* The StatefulSet controller creates pod <id>-0. Admission needs the
 \* ServiceAccount the pod names.
@@ -295,7 +319,7 @@ AgentSend ==
     /\ cloned' = (cloned \/ Head(todo) = "starting-claude")
     /\ loggedIn' = (loggedIn \/ Head(todo) = "ready")
     /\ UNCHANGED <<row, created, sa, sts, pvc, pod, crashes, inc, landed, rpc, snap,
-                   rwrite, applyFailed>>
+                   rwrite, applyFailed, lock>>
 
 \* AgentServer.status: SetSignIn, SetLink and SetPhase, each guarded by
 \* desired = running. Only SetPhase moves the phase, so the model writes
@@ -307,7 +331,7 @@ AgentLand ==
         /\ landed' = IF row.exists /\ row.desired = "running" /\ pod = "running"
                       THEN m.ph ELSE landed
         /\ UNCHANGED <<created, sa, sts, pvc, pod, crashes, cloned, loggedIn, todo, inc,
-                       rpc, snap, rwrite, applyFailed>>
+                       rpc, snap, rwrite, applyFailed, lock>>
 
 -----------------------------------------------------------------------------
 

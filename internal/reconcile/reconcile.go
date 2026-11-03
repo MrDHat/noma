@@ -82,14 +82,23 @@ func (r *Reconciler) Run(ctx context.Context) {
 		case <-r.wake:
 		case <-ticker.C:
 		}
-		if err := r.pass(ctx); err != nil && ctx.Err() == nil {
-			slog.Error("reconcile pass failed", "err", err)
-			time.AfterFunc(retryAfter, r.Wake)
+		err := r.Store.WithReconcileLock(ctx, func() error { return r.pass(ctx) })
+		if err == nil || ctx.Err() != nil {
+			continue
 		}
+		if errors.Is(err, store.ErrLocked) {
+			// The other replica may have read the rows before what woke us.
+			slog.Info("reconcile pass skipped; retrying", "reason", err)
+		} else {
+			slog.Error("reconcile pass failed", "err", err)
+		}
+		time.AfterFunc(retryAfter, r.Wake)
 	}
 }
 
-// pass reconciles every workspace once.
+// pass reconciles every workspace once. Run holds the reconcile lock around
+// it: two replicas in one pass at once (as during a rollout) could apply a
+// workspace's objects again after the other deleted its row.
 func (r *Reconciler) pass(ctx context.Context) error {
 	workspaces, err := r.Store.Workspaces(ctx)
 	if err != nil {
