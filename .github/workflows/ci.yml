@@ -27,6 +27,19 @@ jobs:
       - run: make build
       - run: ./bin/noma version && ./bin/noma-server version && ./bin/noma-agent version
 
+  # The TLA+ model of the workspace lifecycle, and a check that the code it
+  # covers has not changed since someone last confirmed the model matches it.
+  lifecycle-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The sync check names the last commit that confirmed the model.
+          fetch-depth: 0
+      - run: make verify-lifecycle
+      - run: hack/lifecycle-sync.sh check
+
   e2e:
     runs-on: ubuntu-latest
     env:
