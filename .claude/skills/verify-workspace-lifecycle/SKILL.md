@@ -38,7 +38,7 @@ Each check has an expected result in `CHECKS` in `hack/verify-lifecycle.sh`. The
 | `stale-error` | `stale-error.cfg` | 1 | yes | 0 | pass: `ErrorClears` |
 | `rollout` | `rollout.cfg` | 2 | no | 0 | pass: `NoOrphans` with the reconcile lock |
 
-A failing check prints the counterexample's steps by TLA+ action name. To read the path in plain words, run the pstack `/statechart` skill on `verify/lifecycle/WorkspaceLifecycle.tla` with that check's config. It shows the shortest path to each broken rule. When a check passes, `/statechart` draws a chart of how the workspace moves between states. Point it at the same TLC jar with the `TLA2TOOLS` environment variable.
+A failing check prints the counterexample's steps by TLA+ action name. Run `VERBOSE=1 hack/verify-lifecycle.sh` to see TLC's whole output, with the variables in every state, then retell the path as steps in the code's words: which Go function ran, and what it read or wrote.
 
 ## Known findings
 
@@ -96,7 +96,7 @@ To cover a new file, add a line for it to `covered.sha256` (any hash) and to the
 
 ## Real bug or modeling error?
 
-Read the counterexample (with `/statechart`, or `VERBOSE=1`) and ask, step by step, whether the code can really do this:
+Read the counterexample (with `VERBOSE=1`) and ask, step by step, whether the code can really do this:
 
 - **A real bug:** each step maps to real code, in an order that real concurrency allows. Report it with the path in the code's words. Don't change the model to hide it.
 - **A modeling error:** a step the code cannot take. For example, an action that merges calls the code makes separately, or one that skips a guard the code has. Another case is a property that fires mid-pass, at a moment the code repairs within the same pass. `ErrorClears` checks only between passes for this reason. Fix the model so it matches the code, and name the code in the comment.
