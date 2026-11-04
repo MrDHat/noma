@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"text/tabwriter"
 	"time"
 
 	"github.com/MrDHat/noma/internal/api"
@@ -17,6 +18,8 @@ const pollInterval = time.Second
 
 const usage = `usage:
   noma up [--name NAME] <git-url>   create a workspace for a public repo
+  noma ls                           list your workspaces
+  noma attach <name>                wait for a workspace and print its link
   noma stop <name>                  stop a workspace, keeping its files
   noma start <name>                 start a stopped workspace again
   noma rm <name>                    delete a workspace and its volume
@@ -36,6 +39,10 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return 0
 	case "up":
 		err = up(ctx, args[1:], bufio.NewReader(stdin), stdout)
+	case "ls":
+		err = ls(ctx, args[1:], stdout)
+	case "attach":
+		err = attach(ctx, args[1:], bufio.NewReader(stdin), stdout)
 	case "rm":
 		err = rm(ctx, args[1:], stdout)
 	case "stop":
@@ -86,8 +93,8 @@ func up(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Write
 	return waitReady(ctx, c, ws.Name, stdin, stdout)
 }
 
-// waitReady prints progress until the workspace is ready. Ctrl-C stops
-// waiting; the workspace keeps going.
+// waitReady prints progress until the workspace is ready, and gives up if
+// it is stopped or deleted. Ctrl-C stops waiting; the workspace keeps going.
 func waitReady(ctx context.Context, c *Client, name string, stdin *bufio.Reader, stdout io.Writer) error {
 	last, answered := "", ""
 	for {
@@ -115,6 +122,10 @@ func waitReady(ctx context.Context, c *Client, name string, stdin *bufio.Reader,
 			return nil
 		case api.PhaseError:
 			return fmt.Errorf("workspace %s failed: %s", name, ws.Message)
+		case api.PhaseStopping, api.PhaseStopped:
+			return fmt.Errorf("workspace %s is %s; run noma start %s", name, ws.Phase, name)
+		case api.PhaseDeleting:
+			return fmt.Errorf("workspace %s is being deleted", name)
 		}
 		select {
 		case <-ctx.Done():
@@ -129,6 +140,49 @@ func progress(ws *api.Workspace) string {
 		return "  " + ws.Phase
 	}
 	return fmt.Sprintf("  %s: %s", ws.Phase, ws.Message)
+}
+
+func ls(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: noma ls")
+	}
+	c, err := connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	list, err := c.Workspaces(ctx)
+	if err != nil {
+		return err
+	}
+	if len(list) == 0 {
+		fmt.Fprintln(stdout, "no workspaces; create one with noma up <git-url>")
+		return nil
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tPHASE\tREPO\tLINK")
+	for _, ws := range list {
+		link := ws.Link
+		if link == "" {
+			link = "-"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", ws.Name, ws.Phase, ws.RepoURL, link)
+	}
+	return tw.Flush()
+}
+
+// attach picks up a workspace where noma up left it: it shows progress,
+// asks for a pending sign-in and prints the link.
+func attach(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Writer) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: noma attach <name>")
+	}
+	c, err := connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return waitReady(ctx, c, args[0], stdin, stdout)
 }
 
 func stop(ctx context.Context, args []string, stdout io.Writer) error {

@@ -21,6 +21,9 @@ import (
 // devUser is the only user until real login arrives (M5).
 const devUser = "dev"
 
+// maxBody caps request bodies; every request the CLI sends is small.
+const maxBody = 16 << 10
+
 // Server serves the CLI API.
 type Server struct {
 	Store      *store.Store
@@ -35,6 +38,7 @@ type Server struct {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.Handle("GET /v1/workspaces", s.authed(s.listWorkspaces))
 	mux.Handle("POST /v1/workspaces", s.authed(s.createWorkspace))
 	mux.Handle("GET /v1/workspaces/{name}", s.authed(s.getWorkspace))
 	mux.Handle("DELETE /v1/workspaces/{name}", s.authed(s.deleteWorkspace))
@@ -58,7 +62,7 @@ func (s *Server) authed(h func(w http.ResponseWriter, r *http.Request, user stri
 
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request, user string) {
 	var req api.CreateWorkspaceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
@@ -81,6 +85,19 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request, user st
 	}
 	s.Wake()
 	writeJSON(w, http.StatusCreated, toAPI(ws))
+}
+
+func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request, user string) {
+	rows, err := s.Store.WorkspacesOf(r.Context(), user)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	list := api.WorkspaceList{Workspaces: make([]api.Workspace, 0, len(rows))}
+	for i := range rows {
+		list.Workspaces = append(list.Workspaces, toAPI(&rows[i]))
+	}
+	writeJSON(w, http.StatusOK, list)
 }
 
 // insertWorkspace stores a new workspace. Without an explicit name it uses
@@ -208,7 +225,7 @@ func (s *Server) workspace(w http.ResponseWriter, r *http.Request, user string) 
 // server can't read it and never stores it.
 func (s *Server) signIn(w http.ResponseWriter, r *http.Request, user string) {
 	var req api.SignInCode
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil || req.SealedCode == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody)).Decode(&req); err != nil || req.SealedCode == "" {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}

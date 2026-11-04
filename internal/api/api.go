@@ -51,6 +51,11 @@ type SignInCode struct {
 	SealedCode string `json:"sealedCode"`
 }
 
+// WorkspaceList is the response to listing workspaces.
+type WorkspaceList struct {
+	Workspaces []Workspace `json:"workspaces"`
+}
+
 // CreateWorkspaceRequest is the body of POST /v1/workspaces.
 type CreateWorkspaceRequest struct {
 	RepoURL string `json:"repoUrl"`
