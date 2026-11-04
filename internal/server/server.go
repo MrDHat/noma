@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/MrDHat/noma/internal/api"
+	"github.com/MrDHat/noma/internal/secrets"
 	"github.com/MrDHat/noma/internal/store"
 )
 
@@ -32,6 +33,8 @@ type Server struct {
 	Wake func()
 	// SendToAgent queues a message for a workspace's agent.
 	SendToAgent func(id string, m api.AgentMessage) error
+	// SecretKey seals secret values before they reach Postgres.
+	SecretKey *secrets.Key
 }
 
 // Handler returns the HTTP handler for the CLI API.
@@ -45,6 +48,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/workspaces/{name}/stop", s.authed(s.stopWorkspace))
 	mux.Handle("POST /v1/workspaces/{name}/start", s.authed(s.startWorkspace))
 	mux.Handle("POST /v1/workspaces/{name}/signin", s.authed(s.signIn))
+	mux.Handle("GET /v1/secrets", s.authed(s.listSecrets))
+	mux.Handle("PUT /v1/secrets/{name}", s.authed(s.putSecret))
+	mux.Handle("DELETE /v1/secrets/{name}", s.authed(s.deleteSecret))
 	return mux
 }
 
