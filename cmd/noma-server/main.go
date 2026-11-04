@@ -65,10 +65,10 @@ func run() error {
 		Memory:    memory,
 	})
 	go rec.Run(ctx)
+	agents := &server.AgentServer{Store: st, Kube: kube, Wake: rec.Wake}
 
 	// The CLI API, and the agent endpoint, which only workspaces reach and
 	// which always uses TLS because agents send their token on every request.
-	agents := &server.AgentServer{Store: st, Kube: kube}
 	cliAPI := &http.Server{
 		Addr:              envOr("NOMA_LISTEN", ":8080"),
 		Handler:           (&server.Server{Store: st, AdminToken: token, Wake: rec.Wake, SendToAgent: agents.Send}).Handler(),

@@ -52,6 +52,11 @@ image() {
 image noma-server "${ROOT}/build/server.Dockerfile" "${out}/noma-server"
 image noma-workspace "${ROOT}/build/workspace.Dockerfile" \
   "${out}/noma-agent" "${out}/fakeclaude" "${CERTS}/ca.crt" -- --build-opt="opt=build-arg:CLAUDE=${CLAUDE}"
+if [ "$CLAUDE" = fake ]; then
+  # Stand-ins for a repo's own image (noma.yaml), for the e2e tests.
+  image noma-e2e-project "${ROOT}/build/e2e-project.Dockerfile"
+  image noma-e2e-nogit "${ROOT}/build/e2e-project.Dockerfile" -- --build-opt="opt=build-arg:GIT=no"
+fi
 
 kc apply -f "${ROOT}/deploy/dev/rbac.yaml" -f "${ROOT}/deploy/dev/server.yaml"
 # Real Claude needs room for the Remote Control server and its sessions; the

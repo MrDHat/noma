@@ -125,6 +125,30 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 		corev1.ResourceMemory: cfg.Memory,
 		corev1.ResourceCPU:    resource.MustParse(workspaceCPU),
 	}
+	image := cfg.Image
+	var (
+		command []string
+		env     []*corev1ac.EnvVarApplyConfiguration
+		mounts  []*corev1ac.VolumeMountApplyConfiguration
+		volumes []*corev1ac.VolumeApplyConfiguration
+	)
+	if ws.Image != "" {
+		// The repo's own image, with our binaries copied in (M3-17).
+		image = ws.Image
+		command = []string{toolsDir + "/noma-agent"}
+		env = []*corev1ac.EnvVarApplyConfiguration{
+			corev1ac.EnvVar().WithName("NOMA_PROJECT_IMAGE").WithValue(ws.Image),
+			corev1ac.EnvVar().WithName("NOMA_CLAUDE_BIN").WithValue(toolsDir + "/claude"),
+			corev1ac.EnvVar().WithName("NOMA_CA_FILE").WithValue(toolsDir + "/ca.crt"),
+		}
+		mounts = []*corev1ac.VolumeMountApplyConfiguration{
+			corev1ac.VolumeMount().WithName("noma-tools").WithMountPath(toolsDir).WithReadOnly(true),
+		}
+		volumes = []*corev1ac.VolumeApplyConfiguration{
+			corev1ac.Volume().WithName("noma-tools").WithEmptyDir(corev1ac.EmptyDirVolumeSource().
+				WithMedium(corev1.StorageMediumMemory).WithSizeLimit(resource.MustParse(toolsSize))),
+		}
+	}
 	return appsv1ac.StatefulSet(ws.ID, namespaceFor(ws.Owner)).
 		WithLabels(workspaceLabels(ws)).
 		WithSpec(appsv1ac.StatefulSetSpec().
@@ -144,10 +168,13 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 						WithRunAsGroup(workspaceUID).
 						WithFSGroup(workspaceUID).
 						WithSeccompProfile(corev1ac.SeccompProfile().WithType(corev1.SeccompProfileTypeRuntimeDefault))).
+					WithInitContainers(initContainers(ws, cfg)...).
 					WithContainers(corev1ac.Container().
 						WithName("workspace").
-						WithImage(cfg.Image).
+						WithImage(image).
 						WithImagePullPolicy(corev1.PullIfNotPresent).
+						WithCommand(command...).
+						WithEnv(env...).
 						WithEnv(
 							corev1ac.EnvVar().WithName("NOMA_SERVER_URL").WithValue(cfg.ServerURL),
 							corev1ac.EnvVar().WithName("NOMA_TOKEN_FILE").WithValue(tokenPath+"/token"),
@@ -158,10 +185,12 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 							WithAllowPrivilegeEscalation(false).
 							WithReadOnlyRootFilesystem(true).
 							WithCapabilities(corev1ac.Capabilities().WithDrop("ALL"))).
+						WithVolumeMounts(mounts...).
 						WithVolumeMounts(
 							corev1ac.VolumeMount().WithName("workspace").WithMountPath(workspaceDir(ws)),
 							corev1ac.VolumeMount().WithName("tmp").WithMountPath("/tmp"),
 							corev1ac.VolumeMount().WithName("token").WithMountPath(tokenPath).WithReadOnly(true))).
+					WithVolumes(volumes...).
 					WithVolumes(
 						corev1ac.Volume().WithName("workspace").
 							WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().WithClaimName(ws.ID)),
@@ -176,4 +205,33 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 										WithAudience(api.TokenAudience).
 										WithExpirationSeconds(tokenLifetime).
 										WithPath("token"))))))))
+}
+
+// toolsDir holds noma-agent, claude and the CA in a pod running a project
+// image; toolsSize bounds it, and counts against the pod's memory.
+const (
+	toolsDir  = "/opt/noma"
+	toolsSize = "512Mi"
+)
+
+// initContainers copies our binaries out of the Noma workspace image into
+// a project-image pod. A Noma-image pod needs none.
+func initContainers(ws *store.Workspace, cfg Config) []*corev1ac.ContainerApplyConfiguration {
+	if ws.Image == "" {
+		return nil
+	}
+	// Files in the in-memory volume count against the container that
+	// writes them, so the copy gets the workspace's own memory.
+	limits := corev1.ResourceList{corev1.ResourceMemory: cfg.Memory, corev1.ResourceCPU: resource.MustParse(workspaceCPU)}
+	return []*corev1ac.ContainerApplyConfiguration{corev1ac.Container().
+		WithName("noma-tools").
+		WithImage(cfg.Image).
+		WithImagePullPolicy(corev1.PullIfNotPresent).
+		WithCommand("cp", "/usr/local/bin/noma-agent", "/usr/local/bin/claude", "/etc/noma/ca.crt", toolsDir+"/").
+		WithResources(corev1ac.ResourceRequirements().WithRequests(limits).WithLimits(limits)).
+		WithSecurityContext(corev1ac.SecurityContext().
+			WithAllowPrivilegeEscalation(false).
+			WithReadOnlyRootFilesystem(true).
+			WithCapabilities(corev1ac.Capabilities().WithDrop("ALL"))).
+		WithVolumeMounts(corev1ac.VolumeMount().WithName("noma-tools").WithMountPath(toolsDir))}
 }
