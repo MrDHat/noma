@@ -214,8 +214,9 @@ RecUnlock(r) ==
                    changed, lost, stops>>
 
 \* ensure: each server-side apply is one API call. A failed one ends the
-\* pass, after setPhase(error) if the snapshot's phase is the reconciler's. Namespace and NetworkPolicy are per
-\* owner and never deleted, so the model leaves them out.
+\* pass, after setPhase(error) if the snapshot's phase is the reconciler's.
+\* Namespace, NetworkPolicy and the agent CA ConfigMap are per owner and
+\* never deleted, so the model leaves them out.
 RecApply(r, from, to, effect) ==
     /\ rpc[r] = from
     /\ \/ /\ effect

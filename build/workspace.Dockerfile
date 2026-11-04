@@ -1,6 +1,7 @@
 # Workspace image: Debian (glibc, so prebuilt tools and native modules work),
 # git, Claude Code and noma-agent as PID 1.
-# Build context: linux noma-agent and fakeclaude binaries, and the dev CA.
+# Build context: linux noma-agent and fakeclaude binaries. The CA that
+# signs noma-server's agent endpoint comes at run time, from a ConfigMap.
 # CLAUDE=real installs the pinned Claude Code; CLAUDE=fake (CI) uses fakeclaude.
 ARG CLAUDE=real
 ARG DEBIAN=debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
@@ -31,7 +32,6 @@ COPY --chmod=0755 fakeclaude /usr/local/bin/claude
 
 FROM claude-${CLAUDE}
 ENV DISABLE_AUTOUPDATER=1
-COPY --chmod=0644 ca.crt /etc/noma/ca.crt
 COPY --chmod=0755 noma-agent /usr/local/bin/noma-agent
 USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/noma-agent"]

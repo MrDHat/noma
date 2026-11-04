@@ -59,7 +59,13 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("NOMA_WORKSPACE_MEMORY: %w", err)
 	}
+	tlsDir := envOr("NOMA_TLS_DIR", "/etc/noma/tls")
+	agentCA, err := os.ReadFile(tlsDir + "/ca.crt")
+	if err != nil {
+		return fmt.Errorf("agent CA: %w", err)
+	}
 	rec := reconcile.New(st, kube, reconcile.Config{
+		AgentCA:   string(agentCA),
 		Image:     envOr("NOMA_WORKSPACE_IMAGE", "noma-workspace:dev"),
 		ServerURL: envOr("NOMA_AGENT_URL", "https://noma-server.noma-system.svc:8443"),
 		Memory:    memory,
@@ -79,8 +85,6 @@ func run() error {
 		Handler:           agents.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	tlsDir := envOr("NOMA_TLS_DIR", "/etc/noma/tls")
-
 	errc := make(chan error, 2)
 	go func() { errc <- cliAPI.ListenAndServe() }()
 	go func() { errc <- agentAPI.ListenAndServeTLS(tlsDir+"/tls.crt", tlsDir+"/tls.key") }()
