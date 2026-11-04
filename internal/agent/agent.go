@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -20,6 +21,8 @@ type Agent struct {
 	Dir string
 	// ClaudeBin is the claude binary.
 	ClaudeBin string
+	// ProfileURL is Claude's profile endpoint, for the account check.
+	ProfileURL string
 
 	// codes passes sealed sign-in codes from the message loop to signIn.
 	codes chan *api.SignInCode
@@ -64,12 +67,30 @@ func (a *Agent) superviseClaude(ctx context.Context, c *Claude) {
 		if !a.waitForLogin(ctx, c) {
 			return
 		}
+		// The login is shared, so check whose it is before every start, and
+		// again once Claude runs, when it has refreshed an expired token.
+		if err := a.checkAccount(ctx, c); errors.Is(err, errAccountChanged) {
+			a.accountChanged(ctx)
+			return
+		}
+		run, stopRun := context.WithCancelCause(ctx)
 		start := time.Now()
-		err := c.RemoteControl(ctx, func(link string) {
+		err := c.RemoteControl(run, func(link string) {
 			slog.Info("remote control ready", "link", link)
 			a.report(ctx, api.AgentStatus{Phase: api.PhaseReady, Link: link})
+			go func() {
+				if err := a.checkAccount(run, c); err != nil {
+					stopRun(err)
+				}
+			}()
 		})
+		changed := errors.Is(context.Cause(run), errAccountChanged)
+		stopRun(nil)
 		if ctx.Err() != nil {
+			return
+		}
+		if changed {
+			a.accountChanged(ctx)
 			return
 		}
 		slog.Warn("claude stopped, restarting", "err", err)
@@ -80,6 +101,13 @@ func (a *Agent) superviseClaude(ctx context.Context, c *Claude) {
 		sleep(ctx, wait)
 		wait = min(wait*2, time.Minute)
 	}
+}
+
+// accountChanged reports that the login is another account's and leaves
+// Claude stopped. Stop and start the workspace once the login is fixed.
+func (a *Agent) accountChanged(ctx context.Context) {
+	slog.Error("claude account changed; not starting claude")
+	a.report(ctx, api.AgentStatus{Phase: api.PhaseError, Message: errAccountChanged.Error()})
 }
 
 // waitForLogin returns once Claude has a login, running sign-ins until one
