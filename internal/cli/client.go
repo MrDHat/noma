@@ -50,6 +50,12 @@ func (c *Client) CreateWorkspace(ctx context.Context, req api.CreateWorkspaceReq
 	return &ws, c.do(ctx, http.MethodPost, "/v1/workspaces", req, &ws)
 }
 
+// Workspaces returns the user's workspaces, oldest first.
+func (c *Client) Workspaces(ctx context.Context) ([]api.Workspace, error) {
+	var list api.WorkspaceList
+	return list.Workspaces, c.do(ctx, http.MethodGet, "/v1/workspaces", nil, &list)
+}
+
 // Workspace returns the workspace called name.
 func (c *Client) Workspace(ctx context.Context, name string) (*api.Workspace, error) {
 	var ws api.Workspace

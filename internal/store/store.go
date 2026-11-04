@@ -111,6 +111,13 @@ func (s *Store) Workspaces(ctx context.Context) ([]Workspace, error) {
 	return ws, err
 }
 
+// WorkspacesOf returns the owner's workspaces, oldest first.
+func (s *Store) WorkspacesOf(ctx context.Context, owner string) ([]Workspace, error) {
+	var ws []Workspace
+	err := s.db.NewSelect().Model(&ws).Where("owner = ?", owner).Order("created_at").Scan(ctx)
+	return ws, err
+}
+
 // MarkDeleted records that the user wants the workspace gone, running or
 // stopped. The reconciler removes its Kubernetes objects and then the row.
 func (s *Store) MarkDeleted(ctx context.Context, id string) error {
