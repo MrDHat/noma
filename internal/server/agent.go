@@ -29,6 +29,8 @@ const longPoll = 30 * time.Second
 type AgentServer struct {
 	Store *store.Store
 	Kube  kubernetes.Interface
+	// Credentials yields the credentials each workspace gets.
+	Credentials CredentialSource
 
 	mu    sync.Mutex
 	boxes map[string]chan api.AgentMessage
@@ -40,6 +42,7 @@ func (a *AgentServer) Handler() http.Handler {
 	mux.Handle("GET /agent/v1/workspace", a.authed(a.config))
 	mux.Handle("POST /agent/v1/status", a.authed(a.status))
 	mux.Handle("GET /agent/v1/messages", a.authed(a.messages))
+	mux.Handle("GET /agent/v1/credentials", a.authed(a.credentials))
 	return mux
 }
 
