@@ -110,6 +110,15 @@ func volumeClaim(ws *store.Workspace) *corev1ac.PersistentVolumeClaimApplyConfig
 				WithRequests(corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(volumeSize)})))
 }
 
+// replicas is 1 for a running workspace and 0 for a stopped one, whose
+// volume stays.
+func replicas(ws *store.Workspace) int32 {
+	if ws.Desired == store.DesiredStopped {
+		return 0
+	}
+	return 1
+}
+
 // statefulSet runs the workspace pod: at most one, under gVisor, locked down.
 func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConfiguration {
 	limits := corev1.ResourceList{
@@ -119,7 +128,7 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 	return appsv1ac.StatefulSet(ws.ID, namespaceFor(ws.Owner)).
 		WithLabels(workspaceLabels(ws)).
 		WithSpec(appsv1ac.StatefulSetSpec().
-			WithReplicas(1).
+			WithReplicas(replicas(ws)).
 			WithServiceName(ws.ID).
 			WithSelector(metav1ac.LabelSelector().WithMatchLabels(map[string]string{labelWorkspace: ws.ID})).
 			WithTemplate(corev1ac.PodTemplateSpec().

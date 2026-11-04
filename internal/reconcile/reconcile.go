@@ -120,7 +120,8 @@ func (r *Reconciler) pass(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// ensure applies every object a running workspace needs and records what it sees.
+// ensure applies every object a workspace needs and records what it sees. A
+// stopped workspace keeps its ServiceAccount and volume, with no pod.
 func (r *Reconciler) ensure(ctx context.Context, ws *store.Workspace) error {
 	ns := namespaceFor(ws.Owner)
 	steps := []func() error{
@@ -165,7 +166,7 @@ const errObjects = "could not create workspace objects"
 // rather than one the agent reported.
 func reconcilerPhase(ws *store.Workspace) bool {
 	switch ws.Phase {
-	case api.PhasePending, api.PhaseStarting:
+	case api.PhasePending, api.PhaseStarting, api.PhaseStopping, api.PhaseStopped:
 		return true
 	case api.PhaseError:
 		return ws.Message == errObjects
@@ -180,6 +181,16 @@ func reconcilerPhase(ws *store.Workspace) bool {
 // it, so observe never overwrites what the agent reported in the meantime.
 func (r *Reconciler) observe(ctx context.Context, ws *store.Workspace) error {
 	pod, err := r.Kube.CoreV1().Pods(namespaceFor(ws.Owner)).Get(ctx, ws.ID+"-0", metav1.GetOptions{})
+	if ws.Desired == store.DesiredStopped {
+		switch {
+		case apierrors.IsNotFound(err):
+			return r.setPhase(ctx, ws, api.PhaseStopped, "")
+		case err != nil:
+			return err
+		}
+		// The pod's deletion wakes the next pass.
+		return r.setPhase(ctx, ws, api.PhaseStopping, "")
+	}
 	if apierrors.IsNotFound(err) {
 		return r.setStarting(ctx, ws, "creating pod")
 	}
