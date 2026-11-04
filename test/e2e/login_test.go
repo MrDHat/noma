@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"context"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -73,11 +72,14 @@ func TestConcurrentUpsNeedOneCode(t *testing.T) {
 		_, _ = noma(t, "rm", "e2e-login-c")
 		_, _ = noma(t, "rm", "e2e-login-d")
 	})
-	// d's user never types anything; its stdin stays open.
-	stdin, never := io.Pipe()
-	defer never.Close() //nolint:errcheck
 	d := exec.Command(nomaBin, "up", "--name", "e2e-login-d", demoRepo)
-	d.Stdin = stdin
+	// d's user never types anything; its stdin stays open. An OS pipe, so
+	// no goroutine copies into it and Wait can return.
+	never, err := d.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer never.Close() //nolint:errcheck
 	d.Env = append(os.Environ(), "NOMA_NO_BROWSER=1")
 	// noma's kubectl port-forward child can hold the output open; don't
 	// wait for it once noma itself has exited.
@@ -94,7 +96,7 @@ func TestConcurrentUpsNeedOneCode(t *testing.T) {
 
 	// Give d time to reach its sign-in prompt first.
 	time.Sleep(10 * time.Second)
-	mustNoma(t, "up", "--name", "e2e-login-c", demoRepo)
+	cOut := mustNoma(t, "up", "--name", "e2e-login-c", demoRepo)
 
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done) }()
@@ -103,8 +105,12 @@ func TestConcurrentUpsNeedOneCode(t *testing.T) {
 	case <-time.After(2 * time.Minute):
 		_ = d.Process.Kill()
 		<-done
-		ws, _ := client(t).Workspace(context.Background(), "e2e-login-d")
-		t.Fatalf("noma up for e2e-login-d kept waiting after e2e-login-c signed in; workspace %+v\n%s", ws, dOut.String())
+		ws, err := client(t).Workspace(context.Background(), "e2e-login-d")
+		if err != nil {
+			t.Fatal(err)
+		}
+		logs, _ := exec.Command("kubectl", "--context", kubeContext(), "-n", userNamespace, "logs", ws.ID+"-0").CombinedOutput()
+		t.Fatalf("noma up for e2e-login-d kept waiting after e2e-login-c signed in\nworkspace: %+v\nd's output:\n%s\nc's output:\n%s\nd's agent:\n%s", ws, dOut.String(), cOut, logs)
 	}
 	if dErr != nil || !linkPattern.MatchString(dOut.String()) {
 		t.Fatalf("noma up for e2e-login-d: %v\n%s", dErr, dOut.String())
