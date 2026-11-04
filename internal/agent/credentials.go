@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,38 @@ func (v *vault) gitToken(host string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// env returns the credentials delivered as environment variables, as
+// NAME=value, sorted.
+func (v *vault) env() []string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var env []string
+	for _, c := range v.creds {
+		if c.Env != "" {
+			env = append(env, c.Env+"="+c.Value)
+		}
+	}
+	slices.Sort(env)
+	return env
+}
+
+// refreshCredentials fetches the credentials again after the server says
+// they changed. A git token takes effect at once; changed environment
+// variables restart Claude, which keeps its link.
+func (a *Agent) refreshCredentials(ctx context.Context) {
+	before := a.vault.env()
+	if err := a.loadCredentials(ctx); err != nil {
+		slog.Warn("refresh credentials", "err", err)
+		return
+	}
+	if !slices.Equal(before, a.vault.env()) {
+		select {
+		case a.restartClaude <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // loadCredentials fetches the workspace's credentials from the server.

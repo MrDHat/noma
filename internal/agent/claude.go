@@ -27,6 +27,8 @@ type Claude struct {
 	Dir string
 	// Name is shown in claude.ai/code.
 	Name string
+	// Env returns extra environment variables, the workspace's credentials.
+	Env func() []string
 }
 
 var (
@@ -154,7 +156,12 @@ func envIDIn(path string) string {
 func (c *Claude) command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, c.Bin, args...)
 	cmd.Dir = c.Dir
-	cmd.Env = append(os.Environ(), "HOME="+c.Home, "TERM=xterm-256color", "DISABLE_AUTOUPDATER=1")
+	cmd.Env = os.Environ()
+	if c.Env != nil {
+		cmd.Env = append(cmd.Env, c.Env()...)
+	}
+	// After the credentials, so they can't override these.
+	cmd.Env = append(cmd.Env, "HOME="+c.Home, "TERM=xterm-256color", "DISABLE_AUTOUPDATER=1")
 	cmd.WaitDelay = 5 * time.Second
 	return cmd
 }
