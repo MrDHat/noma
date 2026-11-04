@@ -69,7 +69,7 @@ func (a *Agent) superviseClaude(ctx context.Context, c *Claude) {
 		}
 		// The login is shared, so check whose it is before every start, and
 		// again once Claude runs, when it has refreshed an expired token.
-		if a.checkAccount(ctx, c) != nil {
+		if err := a.checkAccount(ctx, c); errors.Is(err, errAccountChanged) {
 			a.accountChanged(ctx)
 			return
 		}

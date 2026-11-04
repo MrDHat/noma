@@ -41,7 +41,9 @@ func TestPlantedAccountStopsClaude(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the workspace kept going on another account's login: %+v", ws)
+			agent, _ := exec.Command("kubectl", "--context", kubeContext(), "-n", userNamespace, "logs", pod).CombinedOutput()
+			server, _ := exec.Command("kubectl", "--context", kubeContext(), "-n", "noma-system", "logs", "deploy/noma-server").CombinedOutput()
+			t.Fatalf("the workspace kept going on another account's login: %+v\nagent:\n%s\nserver:\n%s", ws, agent, server)
 		}
 		time.Sleep(time.Second)
 	}

@@ -86,7 +86,7 @@ func (s *Store) PinClaudeAccount(ctx context.Context, user, account string) (boo
 		On("CONFLICT (name) DO UPDATE").
 		Set("claude_account = EXCLUDED.claude_account").
 		Set("updated_at = now()").
-		Where("users.claude_account = ''").
+		Where("?TableAlias.claude_account = ''").
 		Exec(ctx)
 	if err != nil {
 		return false, err

@@ -84,8 +84,10 @@ func (a *Agent) claudeAccount(ctx context.Context, token string) (string, error)
 }
 
 // checkAccount checks the login's account against the user's pinned one.
-// It returns errAccountChanged only on a mismatch or a refused token; when
-// it can't tell (an expired token, a network error) it lets Claude run.
+// It returns errAccountChanged on a mismatch or a refused token. When the
+// profile endpoint can't tell (an expired token, a network error) it lets
+// Claude run; when noma-server can't answer, it keeps asking, so a broken
+// check never quietly lets Claude through.
 func (a *Agent) checkAccount(ctx context.Context, c *Claude) error {
 	token, fresh, err := accessToken(c.Home)
 	if err != nil {
@@ -97,12 +99,25 @@ func (a *Agent) checkAccount(ctx context.Context, c *Claude) error {
 		return nil
 	}
 	id, err := a.claudeAccount(ctx, token)
-	if err == nil {
-		err = a.Client.CheckAccount(ctx, api.AgentAccount{Account: id})
+	if errors.Is(err, errAccountChanged) {
+		return err
 	}
-	if err != nil && !errors.Is(err, errAccountChanged) {
-		slog.Warn("could not check claude account", "err", err)
+	if err != nil {
+		slog.Warn("could not ask claude's profile endpoint", "err", err)
 		return nil
 	}
-	return err
+	changed, err := retry(ctx, func() (bool, error) {
+		err := a.Client.CheckAccount(ctx, api.AgentAccount{Account: id})
+		if errors.Is(err, errAccountChanged) {
+			return true, nil
+		}
+		return false, err
+	})
+	switch {
+	case err != nil:
+		return err // ctx is done
+	case changed:
+		return errAccountChanged
+	}
+	return nil
 }
