@@ -23,6 +23,8 @@ type Agent struct {
 
 	// codes passes sealed sign-in codes from the message loop to signIn.
 	codes chan *api.SignInCode
+	// vault holds the workspace's credentials, in memory only.
+	vault vault
 }
 
 // Run sets the workspace up, starts Claude and keeps it running, and serves
@@ -35,6 +37,13 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	slog.Info("workspace", "id", cfg.ID, "name", cfg.Name)
 	a.codes = make(chan *api.SignInCode, 4)
+	// Before the clone, which may need a git token.
+	if _, err := retry(ctx, func() (struct{}, error) { return struct{}{}, a.loadCredentials(ctx) }); err != nil {
+		return err
+	}
+	if err := a.serveCredentials(ctx); err != nil {
+		return fmt.Errorf("serve credentials: %w", err)
+	}
 
 	go func() {
 		if err := a.setup(ctx, cfg); err != nil {
@@ -105,6 +114,9 @@ func (a *Agent) waitForLogin(ctx context.Context, c *Claude) bool {
 func (a *Agent) setup(ctx context.Context, cfg *api.AgentConfig) error {
 	if err := os.MkdirAll(os.Getenv("HOME"), 0o700); err != nil {
 		return fmt.Errorf("create home: %w", err)
+	}
+	if err := useCredentialHelper(ctx); err != nil {
+		return fmt.Errorf("set up git credentials: %w", err)
 	}
 	repo := filepath.Join(a.Dir, repoDir(cfg))
 	if _, err := os.Stat(filepath.Join(repo, ".git")); err == nil {

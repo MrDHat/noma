@@ -18,6 +18,13 @@ func main() {
 		fmt.Println("noma-agent", version.Version)
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "credential" {
+		if err := agent.CredentialHelper(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if code, handled := agent.RunAsInit(); handled {
 		os.Exit(code)
 	}
