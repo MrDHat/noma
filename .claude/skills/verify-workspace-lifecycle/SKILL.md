@@ -1,6 +1,6 @@
 ---
 name: verify-workspace-lifecycle
-description: Model-check Noma's workspace lifecycle (create, reconcile, agent status, delete) with TLA+. Use when a change touches internal/reconcile/reconcile.go, internal/store/store.go's row writes, internal/server/server.go's create/delete handlers, internal/server/agent.go's status handler, the agent's status reports in internal/agent/agent.go or signin.go, or how many noma-server replicas run (deploy/dev/server.yaml). Also use when CI's lifecycle sync check fails, or to check a fix for one of the known findings below.
+description: Model-check Noma's workspace lifecycle (create, reconcile, agent status, stop, start, image swap, delete) with TLA+. Use when a change touches internal/reconcile/reconcile.go, internal/store/store.go's row writes, internal/server/server.go's create/delete/stop/start handlers, internal/server/agent.go's status handler, the agent's status reports in internal/agent/agent.go or signin.go, or how many noma-server replicas run (deploy/dev/server.yaml). Also use when CI's lifecycle sync check fails, or to check a fix for one of the known findings below.
 ---
 
 # Verify the workspace lifecycle
@@ -17,6 +17,9 @@ Three writers race on each workspace: the CLI API, the reconciler, and the works
 | `DeletedGoesAway` | A deleted workspace's row and objects eventually go. | `noma rm` hangs in `deleting` forever. |
 | `AgentPhaseKept` | While the agent's pod runs, the phase is the last one that agent reported. | The CLI shows a stale phase. If `sign-in` is overwritten, `noma up` never prompts, and the agent waits up to 15 minutes. |
 | `ErrorClears` | Once a pass applies every object again, an `error` phase is gone by the end of that pass. | A healthy workspace shows `error`, and `noma up` exits with "failed". |
+| `VolumeKept` | Only a delete loses the volume's data. Stop, start, pod deletion and the image swap never do. M3's strongest promise: stop never loses work. | A stop or restart throws away the user's uncommitted work and Claude state. |
+| `StoppedMeansStopped` | A workspace left stopped ends with no pod and shows `stopped`. | A stopped workspace keeps running (and costing), or the CLI shows it running. |
+| `StartComesBack` | A workspace left running ends with its pod running on its volume, on the image its `noma.yaml` names. | `noma start` hangs, or the image swap never settles. |
 
 ## Run it
 
@@ -26,23 +29,27 @@ hack/verify-lifecycle.sh rollout # only the checks whose name matches
 VERBOSE=1 hack/verify-lifecycle.sh agent-phase   # TLC's full output, with every state
 ```
 
-You need Java 11 or later. The first run downloads TLC 1.7.4 (`tla2tools.jar`, checksum pinned in the script) to `.dev/`, which is gitignored. Set `TLA2TOOLS=/path/to/tla2tools.jar` to use another copy. All checks take about 10 seconds.
+You need Java 11 or later. The first run downloads TLC 1.7.4 (`tla2tools.jar`, checksum pinned in the script) to `.dev/`, which is gitignored. Set `TLA2TOOLS=/path/to/tla2tools.jar` to use another copy. All checks take about 2 minutes on a laptop.
 
 Each check has an expected result in `CHECKS` in `hack/verify-lifecycle.sh`. The script exits 0 only when every check does what it expects.
 
 | Check | Config | Reconcilers | Kubernetes errors | Pod crashes | Expected |
 | --- | --- | --- | --- | --- | --- |
-| `deletion` | `deletion.cfg` | 1 | yes | 1 | pass: `TypeOK`, `DeleteIsFinal`, `NoOrphans`, `NoUndelete` |
+| `deletion` | `deletion.cfg` | 1 | yes | 1 | pass: `TypeOK`, `DeleteIsFinal`, `NoOrphans`, `VolumeKept`, `NoUndelete` |
 | `deletion-liveness` | `deletion-liveness.cfg` | 1 | no | 1 | pass: `DeletedGoesAway` (weak fairness on passes and controllers) |
 | `agent-phase` | `agent-phase.cfg` | 1 | yes | 1 | pass: `AgentPhaseKept` |
 | `stale-error` | `stale-error.cfg` | 1 | yes | 0 | pass: `ErrorClears` |
-| `rollout` | `rollout.cfg` | 2 | no | 0 | pass: `NoOrphans` with the reconcile lock |
+| `rollout` | `rollout.cfg` | 2 | no | 0 | pass: `NoOrphans`, `VolumeKept` with the reconcile lock |
+| `stop-liveness` | `stop-liveness.cfg` | 1 | no | 1 | pass: `StoppedMeansStopped` (weak fairness, agent included) |
+| `start-liveness` | `start-liveness.cfg` | 1 | no | 1 | pass: `StartComesBack` (weak fairness, agent included) |
 
 A failing check prints the counterexample's steps by TLA+ action name. To read the path in plain words, run the pstack `/statechart` skill on `verify/lifecycle/WorkspaceLifecycle.tla` with that check's config. It shows the shortest path to each broken rule. When a check passes, `/statechart` draws a chart of how the workspace moves between states. Point it at the same TLC jar with the `TLA2TOOLS` environment variable.
 
 ## Known findings
 
-None: every check passes. A new finding is a bug in the code, not in the model. List it here with its path, and give its check the expected result `fail <Property>` in `CHECKS`. Do not weaken a property or the model to make it pass.
+None: every check passes.
+
+Found while modeling M3's design, before code: if `noma start` were accepted while the old pod is still stopping, that pod's agent (already `ready`) never reports again and the row stays `starting` for good (`AgentPhaseKept`: `ApiStop` then `ApiStart` with the pod still running). `ApiStart` therefore requires `phase = 'stopped'` (decision M3-25); the stop/start code (NOM-38) must keep that guard. A new finding is a bug in the code, not in the model. List it here with its path, and give its check the expected result `fail <Property>` in `CHECKS`. Do not weaken a property or the model to make it pass.
 
 When a fix lands, mirror it in the model. The check should then pass. Change its expected result in `CHECKS` to `pass`, and remove the finding from this list.
 
@@ -53,11 +60,13 @@ Coverage, with the model operators that stand for each piece of code:
 | Code | Model |
 | --- | --- |
 | `internal/store/store.go`: `SetPhase`, `SetPhaseIfUnchanged`, `MarkDeleted`, `DeleteWorkspace`, `CreateWorkspace`, `Workspaces`, `WithReconcileLock` | `SetPhase`, `SetPhaseIfUnchanged` (`changed` stands for `updated_at`), `ApiDelete`, `RecDeleteRow`, `ApiCreate`, `RecStartPass`, `RecLock`/`RecUnlock` |
-| `internal/server/server.go`: `createWorkspace`/`insertWorkspace`, `deleteWorkspace` | `ApiCreate`, `ApiDelete` |
+| `internal/server/server.go`: `createWorkspace`/`insertWorkspace`, `deleteWorkspace`; stop/start handlers (NOM-38) | `ApiCreate`, `ApiDelete`, `ApiStop`, `ApiStart` |
+| `internal/store/store.go`: `MarkStopped`, `MarkStarted`, `SetImage` (NOM-38, NOM-50) | `ApiStop`, `ApiStart`, `AgentLand`'s image branch |
 | `internal/reconcile/reconcile.go`: `Run`, `pass`, `ensure`, `reconcilerPhase`, `observe`, `setStarting`, `setPhase`, `remove`, `gone` | `RecLock` … `RecDeleteRow`, `ReconcilerPhase`, `RecWrite` |
 | `internal/server/agent.go`: `workspaceForToken`, `status` | `AgentSend` (auth read), `AgentLand` (`SetPhase`) |
 | `internal/agent/agent.go`: `Run`, `setup`, `superviseClaude`, `report`; `signin.go`: `signIn`'s sign-in report | `StartReports`, `AgentSend` |
-| `internal/reconcile/objects.go`: the pod's ServiceAccount, PVC claim and `HOME` on the volume | `PodCreate`, `PodStart`, `PVCFinalize`, `cloned`/`loggedIn` |
+| `internal/reconcile/objects.go`: the pod's ServiceAccount, PVC claim and `HOME` on the volume; the StatefulSet's replicas and image (NOM-38, NOM-50) | `PodCreate`, `PodRemove`, `PodStart`, `PVCFinalize`, `cloned`/`loggedIn`, `RecApplySTS` |
+| `internal/agent/agent.go`: the `noma.yaml` image report (NOM-50) | `StartReports`' `"image"` |
 | `deploy/dev/server.yaml`: replica count and rollout strategy | `Reconcilers` in each config |
 
 A change touches the verification when it does any of these:
@@ -104,7 +113,9 @@ Read the counterexample (with `/statechart`, or `VERBOSE=1`) and ask, step by st
 
 ## Scope and assumptions
 
-Verified: one workspace, all interleavings of the steps above. Bounds: at most 1 container crash (0 in `stale-error` and `rollout`), and 1 reconciler unless a config says 2. A run explores every reachable state within those bounds (about 23,000 for `deletion`).
+Verified: one workspace, all interleavings of the steps above. Bounds: at most 1 container crash (0 in `stale-error` and `rollout`), 1 stop, and 1 reconciler unless a config says 2.
+
+Stop, start and the image swap (M3) were modeled before their code (NOM-38, NOM-50). The rows marked with those issues in the coverage table describe the design on the M3 decisions page; when the code lands, check it against the model and add its files' hashes. A run explores every reachable state within those bounds.
 
 Not covered:
 
@@ -112,6 +123,7 @@ Not covered:
 - the namespace and NetworkPolicy, which are per owner and never deleted;
 - `SetSignIn` and `SetLink`, which the model folds into `AgentLand`'s `SetPhase` (each has the same `desired = running` guard);
 - the sign-in code relay (`server.signIn`, `AgentServer.Send`);
+- an image report from a pod already on the project image (the model's repo always names one project image);
 - the agent's own `error` reports. The reconciler tells them from its own error by the message, so the agent must never report `could not create workspace objects`;
 - two phase writes in the same microsecond, which leave `updated_at` equal, so `SetPhaseIfUnchanged` cannot tell them apart;
 - Postgres or Kubernetes losing writes;

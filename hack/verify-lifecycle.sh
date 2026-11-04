@@ -21,6 +21,8 @@ CHECKS=(
   "agent-phase|agent-phase.cfg|pass"
   "stale-error|stale-error.cfg|pass"
   "rollout|rollout.cfg|pass"
+  "stop-liveness|stop-liveness.cfg|pass"
+  "start-liveness|start-liveness.cfg|pass"
 )
 
 command -v java >/dev/null || { echo "verify-lifecycle: needs Java 11 or later on PATH" >&2; exit 1; }
