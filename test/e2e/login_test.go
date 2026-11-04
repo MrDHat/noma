@@ -79,8 +79,11 @@ func TestConcurrentUpsNeedOneCode(t *testing.T) {
 	d := exec.Command(nomaBin, "up", "--name", "e2e-login-d", demoRepo)
 	d.Stdin = stdin
 	d.Env = append(os.Environ(), "NOMA_NO_BROWSER=1")
-	var dOut strings.Builder
-	d.Stdout, d.Stderr = &dOut, &dOut
+	// noma's kubectl port-forward child can hold the output open; don't
+	// wait for it once noma itself has exited.
+	d.WaitDelay = 5 * time.Second
+	dOut := &syncBuffer{}
+	d.Stdout, d.Stderr = dOut, dOut
 	if err := d.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -100,10 +103,29 @@ func TestConcurrentUpsNeedOneCode(t *testing.T) {
 	case <-time.After(2 * time.Minute):
 		_ = d.Process.Kill()
 		<-done
-		t.Fatalf("noma up for e2e-login-d kept waiting after e2e-login-c signed in:\n%s", dOut.String())
+		ws, _ := client(t).Workspace(context.Background(), "e2e-login-d")
+		t.Fatalf("noma up for e2e-login-d kept waiting after e2e-login-c signed in; workspace %+v\n%s", ws, dOut.String())
 	}
 	if dErr != nil || !linkPattern.MatchString(dOut.String()) {
 		t.Fatalf("noma up for e2e-login-d: %v\n%s", dErr, dOut.String())
 	}
 	t.Logf("e2e-login-d:\n%s", dOut.String())
+}
+
+// syncBuffer collects a command's output from several goroutines.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
