@@ -34,6 +34,9 @@ type Workspace struct {
 	// SignIn is set while Claude in the workspace waits for a sign-in code.
 	SignIn    *SignIn   `json:"signIn,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
+	// AgentSilentSeconds is set when the workspace's agent should be
+	// polling noma-server but hasn't for over two minutes.
+	AgentSilentSeconds int `json:"agentSilentSeconds,omitempty"`
 }
 
 // SignIn is a Claude sign-in that needs the user. The CLI opens URL, asks

@@ -46,10 +46,12 @@ type Workspace struct {
 	Link string `bun:",notnull"`
 	// SignInURL and SignInKey describe a Claude sign-in waiting for a code:
 	// the URL to open and the agent's one-time public key to seal it with.
-	SignInURL string    `bun:"signin_url,notnull"`
-	SignInKey string    `bun:"signin_key,notnull"`
-	CreatedAt time.Time `bun:",notnull,default:current_timestamp"`
-	UpdatedAt time.Time `bun:",notnull,default:current_timestamp"`
+	SignInURL string `bun:"signin_url,notnull"`
+	SignInKey string `bun:"signin_key,notnull"`
+	// AgentSeenAt is when the agent last polled, kept to the minute.
+	AgentSeenAt time.Time `bun:",nullzero"`
+	CreatedAt   time.Time `bun:",notnull,default:current_timestamp"`
+	UpdatedAt   time.Time `bun:",notnull,default:current_timestamp"`
 }
 
 // Store wraps the database.
@@ -165,6 +167,15 @@ func (s *Store) SetSignIn(ctx context.Context, id, url, key string) error {
 	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
 		Set("signin_url = ?", url).
 		Set("signin_key = ?", key).
+		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+	return err
+}
+
+// SetAgentSeen records that the workspace's agent polled just now. It
+// leaves updated_at alone: a poll is not a change the reconciler must see.
+func (s *Store) SetAgentSeen(ctx context.Context, id string) error {
+	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("agent_seen_at = now()").
 		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
 	return err
 }
