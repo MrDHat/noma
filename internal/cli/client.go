@@ -61,6 +61,16 @@ func (c *Client) SendSignInCode(ctx context.Context, name string, code api.SignI
 	return c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(name)+"/signin", code, nil)
 }
 
+// StopWorkspace stops the workspace called name.
+func (c *Client) StopWorkspace(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(name)+"/stop", nil, nil)
+}
+
+// StartWorkspace starts the stopped workspace called name.
+func (c *Client) StartWorkspace(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(name)+"/start", nil, nil)
+}
+
 // DeleteWorkspace deletes the workspace called name.
 func (c *Client) DeleteWorkspace(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/workspaces/"+url.PathEscape(name), nil, nil)

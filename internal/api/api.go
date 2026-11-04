@@ -14,6 +14,8 @@ const (
 	PhaseReady    = "ready"
 	PhaseError    = "error"
 	PhaseDeleting = "deleting"
+	PhaseStopping = "stopping"
+	PhaseStopped  = "stopped"
 )
 
 // TokenAudience is the audience of the Kubernetes token a workspace agent

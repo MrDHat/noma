@@ -38,6 +38,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/workspaces", s.authed(s.createWorkspace))
 	mux.Handle("GET /v1/workspaces/{name}", s.authed(s.getWorkspace))
 	mux.Handle("DELETE /v1/workspaces/{name}", s.authed(s.deleteWorkspace))
+	mux.Handle("POST /v1/workspaces/{name}/stop", s.authed(s.stopWorkspace))
+	mux.Handle("POST /v1/workspaces/{name}/start", s.authed(s.startWorkspace))
 	mux.Handle("POST /v1/workspaces/{name}/signin", s.authed(s.signIn))
 	return mux
 }
@@ -138,6 +140,68 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request, user st
 	}
 	s.Wake()
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// stopWorkspace stops a running workspace, keeping its volume. Stopping a
+// stopped workspace does nothing.
+func (s *Server) stopWorkspace(w http.ResponseWriter, r *http.Request, user string) {
+	ws, ok := s.workspace(w, r, user)
+	if !ok {
+		return
+	}
+	if ws.Desired == store.DesiredDeleted {
+		writeError(w, http.StatusConflict, "workspace is being deleted")
+		return
+	}
+	if err := s.Store.MarkStopped(r.Context(), ws.ID); err != nil {
+		internalError(w, err)
+		return
+	}
+	s.Wake()
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// startWorkspace starts a stopped workspace on its volume. Starting a
+// running workspace does nothing; one still stopping is refused.
+func (s *Server) startWorkspace(w http.ResponseWriter, r *http.Request, user string) {
+	ws, ok := s.workspace(w, r, user)
+	if !ok {
+		return
+	}
+	switch ws.Desired {
+	case store.DesiredRunning:
+		w.WriteHeader(http.StatusAccepted)
+		return
+	case store.DesiredDeleted:
+		writeError(w, http.StatusConflict, "workspace is being deleted")
+		return
+	}
+	err := s.Store.MarkStarted(r.Context(), ws.ID)
+	if errors.Is(err, store.ErrNotStopped) {
+		writeError(w, http.StatusConflict, "workspace is still stopping; try again once it is stopped")
+		return
+	}
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	s.Wake()
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// workspace looks up the user's workspace named in the path, writing the
+// error response if it can't.
+func (s *Server) workspace(w http.ResponseWriter, r *http.Request, user string) (*store.Workspace, bool) {
+	ws, err := s.Store.WorkspaceByName(r.Context(), user, r.PathValue("name"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "workspace not found")
+		return nil, false
+	}
+	if err != nil {
+		internalError(w, err)
+		return nil, false
+	}
+	return ws, true
 }
 
 // signIn passes a sealed Claude sign-in code to the workspace's agent. The

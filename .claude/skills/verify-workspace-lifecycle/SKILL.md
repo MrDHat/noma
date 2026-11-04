@@ -60,12 +60,12 @@ Coverage, with the model operators that stand for each piece of code:
 | Code | Model |
 | --- | --- |
 | `internal/store/store.go`: `SetPhase`, `SetPhaseIfUnchanged`, `MarkDeleted`, `DeleteWorkspace`, `CreateWorkspace`, `Workspaces`, `WithReconcileLock` | `SetPhase`, `SetPhaseIfUnchanged` (`changed` stands for `updated_at`), `ApiDelete`, `RecDeleteRow`, `ApiCreate`, `RecStartPass`, `RecLock`/`RecUnlock` |
-| `internal/server/server.go`: `createWorkspace`/`insertWorkspace`, `deleteWorkspace`; stop/start handlers (NOM-38) | `ApiCreate`, `ApiDelete`, `ApiStop`, `ApiStart` |
-| `internal/store/store.go`: `MarkStopped`, `MarkStarted`, `SetImage` (NOM-38, NOM-50) | `ApiStop`, `ApiStart`, `AgentLand`'s image branch |
+| `internal/server/server.go`: `createWorkspace`/`insertWorkspace`, `deleteWorkspace`, `stopWorkspace`, `startWorkspace` | `ApiCreate`, `ApiDelete`, `ApiStop`, `ApiStart` |
+| `internal/store/store.go`: `MarkStopped`, `MarkStarted`; `SetImage` (NOM-50) | `ApiStop`, `ApiStart`; `AgentLand`'s image branch |
 | `internal/reconcile/reconcile.go`: `Run`, `pass`, `ensure`, `reconcilerPhase`, `observe`, `setStarting`, `setPhase`, `remove`, `gone` | `RecLock` … `RecDeleteRow`, `ReconcilerPhase`, `RecWrite` |
 | `internal/server/agent.go`: `workspaceForToken`, `status` | `AgentSend` (auth read), `AgentLand` (`SetPhase`) |
 | `internal/agent/agent.go`: `Run`, `setup`, `superviseClaude`, `report`; `signin.go`: `signIn`'s sign-in report | `StartReports`, `AgentSend` |
-| `internal/reconcile/objects.go`: the pod's ServiceAccount, PVC claim and `HOME` on the volume; the StatefulSet's replicas and image (NOM-38, NOM-50) | `PodCreate`, `PodRemove`, `PodStart`, `PVCFinalize`, `cloned`/`loggedIn`, `RecApplySTS` |
+| `internal/reconcile/objects.go`: the pod's ServiceAccount, PVC claim and `HOME` on the volume; the StatefulSet's replicas (`replicas`) and image (NOM-50) | `PodCreate`, `PodRemove`, `PodStart`, `PVCFinalize`, `cloned`/`loggedIn`, `RecApplySTS` |
 | `internal/agent/agent.go`: the `noma.yaml` image report (NOM-50) | `StartReports`' `"image"` |
 | `deploy/dev/server.yaml`: replica count and rollout strategy | `Reconcilers` in each config |
 
@@ -115,7 +115,7 @@ Read the counterexample (with `/statechart`, or `VERBOSE=1`) and ask, step by st
 
 Verified: one workspace, all interleavings of the steps above. Bounds: at most 1 container crash (0 in `stale-error` and `rollout`), 1 stop, and 1 reconciler unless a config says 2.
 
-Stop, start and the image swap (M3) were modeled before their code (NOM-38, NOM-50). The rows marked with those issues in the coverage table describe the design on the M3 decisions page; when the code lands, check it against the model and add its files' hashes. A run explores every reachable state within those bounds.
+The image swap (M3-17) was modeled before its code (NOM-50). The rows marked with that issue in the coverage table describe the design on the M3 decisions page; when the code lands, check it against the model. Stop and start are in the code (NOM-38). A run explores every reachable state within those bounds.
 
 Not covered:
 

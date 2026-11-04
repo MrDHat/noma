@@ -106,9 +106,14 @@ func remoteControl() {
 		fmt.Fprintln(os.Stderr, "Error: Workspace not trusted. Run claude in this directory and accept the trust dialog first.")
 		os.Exit(1)
 	}
-	env := "env_fake" + randomHex(12)
 	key := regexp.MustCompile(`[^A-Za-z0-9]`).ReplaceAllString(dir, "-")
 	project := filepath.Join(home, ".claude", "projects", key)
+	// Like Claude, resume the environment recorded for this directory, so
+	// the link survives a restart.
+	env := resumedEnv(filepath.Join(project, "bridge-pointer.json"))
+	if env == "" {
+		env = "env_fake" + randomHex(12)
+	}
 	pointer, _ := json.Marshal(map[string]any{"environmentId": env, "pid": os.Getpid()})
 	if err := os.MkdirAll(project, 0o700); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -123,6 +128,16 @@ func remoteControl() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	<-sigs
+}
+
+func resumedEnv(pointer string) string {
+	var p struct {
+		EnvironmentID string `json:"environmentId"`
+	}
+	if b, err := os.ReadFile(pointer); err == nil && json.Unmarshal(b, &p) == nil {
+		return p.EnvironmentID
+	}
+	return ""
 }
 
 func trusted(home, dir string) bool {

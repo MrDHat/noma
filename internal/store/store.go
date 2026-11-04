@@ -23,8 +23,13 @@ var ErrNameTaken = errors.New("name taken")
 // Desired states of a workspace.
 const (
 	DesiredRunning = "running"
+	DesiredStopped = "stopped"
 	DesiredDeleted = "deleted"
 )
+
+// ErrNotStopped is returned when starting a workspace that has not
+// finished stopping.
+var ErrNotStopped = errors.New("workspace is not stopped")
 
 // Workspace is one row of the workspaces table.
 type Workspace struct {
@@ -106,16 +111,46 @@ func (s *Store) Workspaces(ctx context.Context) ([]Workspace, error) {
 	return ws, err
 }
 
-// MarkDeleted records that the user wants the workspace gone. The reconciler
-// removes its Kubernetes objects and then the row.
+// MarkDeleted records that the user wants the workspace gone, running or
+// stopped. The reconciler removes its Kubernetes objects and then the row.
 func (s *Store) MarkDeleted(ctx context.Context, id string) error {
-	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
-		Set("desired = ?", DesiredDeleted).
-		Set("phase = ?", api.PhaseDeleting).
-		Set("message = ''").
-		Set("updated_at = now()").
-		Where("id = ?", id).Exec(ctx)
+	_, err := s.setDesired(DesiredDeleted, api.PhaseDeleting).
+		Where("id = ? AND desired <> ?", id, DesiredDeleted).Exec(ctx)
 	return err
+}
+
+// MarkStopped records that the user wants a running workspace stopped. The
+// reconciler scales it to no pod and keeps its volume. A workspace that is
+// not running is left as it is.
+func (s *Store) MarkStopped(ctx context.Context, id string) error {
+	_, err := s.setDesired(DesiredStopped, api.PhaseStopping).
+		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+	return err
+}
+
+// MarkStarted records that the user wants a stopped workspace running
+// again. It returns ErrNotStopped unless the workspace has finished
+// stopping: the old pod's agent has already reported, so a workspace
+// started while that pod still runs would never hear from it again and
+// stay "starting" (found by the lifecycle model; decision M3-25).
+func (s *Store) MarkStarted(ctx context.Context, id string) error {
+	res, err := s.setDesired(DesiredRunning, api.PhaseStarting).
+		Where("id = ? AND desired = ? AND phase = ?", id, DesiredStopped, api.PhaseStopped).Exec(ctx)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotStopped
+	}
+	return nil
+}
+
+func (s *Store) setDesired(desired, phase string) *bun.UpdateQuery {
+	return s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("desired = ?", desired).
+		Set("phase = ?", phase).
+		Set("message = ''").
+		Set("updated_at = now()")
 }
 
 // SetSignIn records a pending Claude sign-in, or clears it with empty values.
@@ -143,11 +178,11 @@ func (s *Store) SetPhase(ctx context.Context, id, phase, message string) error {
 }
 
 // SetPhaseIfUnchanged is SetPhase for a row read earlier: it writes only if
-// nothing has changed the row's phase since, so the reconciler never
-// overwrites a phase it has not seen.
+// nothing has changed the row's phase or desired state since, so the
+// reconciler never overwrites a phase it has not seen.
 func (s *Store) SetPhaseIfUnchanged(ctx context.Context, read *Workspace, phase, message string) error {
 	_, err := s.setPhase(phase, message).
-		Where("id = ? AND desired = ? AND updated_at = ?", read.ID, DesiredRunning, read.UpdatedAt).Exec(ctx)
+		Where("id = ? AND desired = ? AND updated_at = ?", read.ID, read.Desired, read.UpdatedAt).Exec(ctx)
 	return err
 }
 

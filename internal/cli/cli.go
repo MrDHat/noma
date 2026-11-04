@@ -17,6 +17,8 @@ const pollInterval = time.Second
 
 const usage = `usage:
   noma up [--name NAME] <git-url>   create a workspace for a public repo
+  noma stop <name>                  stop a workspace, keeping its files
+  noma start <name>                 start a stopped workspace again
   noma rm <name>                    delete a workspace and its volume
   noma version
 `
@@ -36,6 +38,10 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		err = up(ctx, args[1:], bufio.NewReader(stdin), stdout)
 	case "rm":
 		err = rm(ctx, args[1:], stdout)
+	case "stop":
+		err = stop(ctx, args[1:], stdout)
+	case "start":
+		err = start(ctx, args[1:], bufio.NewReader(stdin), stdout)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -123,6 +129,55 @@ func progress(ws *api.Workspace) string {
 		return "  " + ws.Phase
 	}
 	return fmt.Sprintf("  %s: %s", ws.Phase, ws.Message)
+}
+
+func stop(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: noma stop <name>")
+	}
+	c, err := connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	if err := c.StopWorkspace(ctx, args[0]); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "stopping workspace %s…\n", args[0])
+	// The server removes the pod and keeps the volume.
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	for {
+		ws, err := c.Workspace(ctx, args[0])
+		if err != nil {
+			return err
+		}
+		if ws.Phase == api.PhaseStopped {
+			fmt.Fprintf(stdout, "workspace %s stopped; its files are kept\n", args[0])
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("workspace %s is still stopping", args[0])
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
+func start(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Writer) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: noma start <name>")
+	}
+	c, err := connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	if err := c.StartWorkspace(ctx, args[0]); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "starting workspace %s\n", args[0])
+	return waitReady(ctx, c, args[0], stdin, stdout)
 }
 
 func rm(ctx context.Context, args []string, stdout io.Writer) error {
