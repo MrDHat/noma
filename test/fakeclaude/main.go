@@ -40,7 +40,12 @@ func main() {
 	}
 }
 
+// credentialsPath is where Claude keeps its login: in
+// CLAUDE_SECURESTORAGE_CONFIG_DIR when set, else in ~/.claude.
 func credentialsPath() string {
+	if dir := os.Getenv("CLAUDE_SECURESTORAGE_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, ".credentials.json")
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".claude", ".credentials.json")
 }
