@@ -3,7 +3,7 @@ LDFLAGS := -s -w -X github.com/MrDHat/noma/internal/version.Version=$(VERSION)
 BINARIES := noma noma-server noma-agent
 BIN ?= bin
 
-.PHONY: build test lint fmt dev-up dev-down deploy e2e demo-real verify-lifecycle
+.PHONY: build test lint fmt dev-up dev-down deploy e2e demo-real verify-lifecycle check-claude-login
 
 build:
 	@mkdir -p $(BIN)
@@ -37,3 +37,7 @@ e2e:
 
 verify-lifecycle:
 	hack/verify-lifecycle.sh
+
+# Linux only. CLAUDE=pinned|latest|VERSION
+check-claude-login:
+	hack/check-claude-login-dir.sh $(or $(CLAUDE),latest)
