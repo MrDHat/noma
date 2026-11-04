@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -38,17 +37,17 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		fmt.Fprintln(stdout, "noma", version.Version)
 		return 0
 	case "up":
-		err = up(ctx, args[1:], bufio.NewReader(stdin), stdout)
+		err = up(ctx, args[1:], newLines(stdin), stdout)
 	case "ls":
 		err = ls(ctx, args[1:], stdout)
 	case "attach":
-		err = attach(ctx, args[1:], bufio.NewReader(stdin), stdout)
+		err = attach(ctx, args[1:], newLines(stdin), stdout)
 	case "rm":
 		err = rm(ctx, args[1:], stdout)
 	case "stop":
 		err = stop(ctx, args[1:], stdout)
 	case "start":
-		err = start(ctx, args[1:], bufio.NewReader(stdin), stdout)
+		err = start(ctx, args[1:], newLines(stdin), stdout)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -71,7 +70,7 @@ func connect(ctx context.Context) (*Client, error) {
 	return Connect(ctx, cfg)
 }
 
-func up(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Writer) error {
+func up(ctx context.Context, args []string, stdin *lines, stdout io.Writer) error {
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	name := fs.String("name", "", "workspace name (default: the repo name)")
 	if err := fs.Parse(args); err != nil {
@@ -95,7 +94,7 @@ func up(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Write
 
 // waitReady prints progress until the workspace is ready, and gives up if
 // it is stopped or deleted. Ctrl-C stops waiting; the workspace keeps going.
-func waitReady(ctx context.Context, c *Client, name string, stdin *bufio.Reader, stdout io.Writer) error {
+func waitReady(ctx context.Context, c *Client, name string, stdin *lines, stdout io.Writer) error {
 	last, answered := "", ""
 	for {
 		ws, err := c.Workspace(ctx, name)
@@ -173,7 +172,7 @@ func ls(ctx context.Context, args []string, stdout io.Writer) error {
 
 // attach picks up a workspace where noma up left it: it shows progress,
 // asks for a pending sign-in and prints the link.
-func attach(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Writer) error {
+func attach(ctx context.Context, args []string, stdin *lines, stdout io.Writer) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: noma attach <name>")
 	}
@@ -218,7 +217,7 @@ func stop(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 }
 
-func start(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Writer) error {
+func start(ctx context.Context, args []string, stdin *lines, stdout io.Writer) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: noma start <name>")
 	}
