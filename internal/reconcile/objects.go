@@ -39,6 +39,9 @@ type Config struct {
 	ServerURL string
 	// Memory is each workspace's memory request and limit.
 	Memory resource.Quantity
+	// ClaudeProfileURL overrides Claude's profile endpoint for the account
+	// check; CI points it at noma-server's fake one.
+	ClaudeProfileURL string
 }
 
 // workspaceDir is where a workspace's volume is mounted. Each workspace has
@@ -121,6 +124,15 @@ func replicas(ws *store.Workspace) int32 {
 
 // statefulSet runs the workspace pod: at most one, under gVisor, locked down.
 func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConfiguration {
+	env := []*corev1ac.EnvVarApplyConfiguration{
+		corev1ac.EnvVar().WithName("NOMA_SERVER_URL").WithValue(cfg.ServerURL),
+		corev1ac.EnvVar().WithName("NOMA_TOKEN_FILE").WithValue(tokenPath + "/token"),
+		corev1ac.EnvVar().WithName("NOMA_WORKSPACE_DIR").WithValue(workspaceDir(ws)),
+		corev1ac.EnvVar().WithName("HOME").WithValue(workspaceDir(ws) + "/home"),
+	}
+	if cfg.ClaudeProfileURL != "" {
+		env = append(env, corev1ac.EnvVar().WithName("NOMA_CLAUDE_PROFILE_URL").WithValue(cfg.ClaudeProfileURL))
+	}
 	limits := corev1.ResourceList{
 		corev1.ResourceMemory: cfg.Memory,
 		corev1.ResourceCPU:    resource.MustParse(workspaceCPU),
@@ -148,11 +160,7 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 						WithName("workspace").
 						WithImage(cfg.Image).
 						WithImagePullPolicy(corev1.PullIfNotPresent).
-						WithEnv(
-							corev1ac.EnvVar().WithName("NOMA_SERVER_URL").WithValue(cfg.ServerURL),
-							corev1ac.EnvVar().WithName("NOMA_TOKEN_FILE").WithValue(tokenPath+"/token"),
-							corev1ac.EnvVar().WithName("NOMA_WORKSPACE_DIR").WithValue(workspaceDir(ws)),
-							corev1ac.EnvVar().WithName("HOME").WithValue(workspaceDir(ws)+"/home")).
+						WithEnv(env...).
 						WithResources(corev1ac.ResourceRequirements().WithRequests(limits).WithLimits(limits)).
 						WithSecurityContext(corev1ac.SecurityContext().
 							WithAllowPrivilegeEscalation(false).

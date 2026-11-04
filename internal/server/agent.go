@@ -29,6 +29,9 @@ const longPoll = 30 * time.Second
 type AgentServer struct {
 	Store *store.Store
 	Kube  kubernetes.Interface
+	// FakeClaude serves a stand-in for Claude's profile endpoint, for
+	// workspaces running the fake Claude in CI.
+	FakeClaude bool
 
 	mu    sync.Mutex
 	boxes map[string]chan api.AgentMessage
@@ -40,6 +43,10 @@ func (a *AgentServer) Handler() http.Handler {
 	mux.Handle("GET /agent/v1/workspace", a.authed(a.config))
 	mux.Handle("POST /agent/v1/status", a.authed(a.status))
 	mux.Handle("GET /agent/v1/messages", a.authed(a.messages))
+	mux.Handle("POST /agent/v1/account", a.authed(a.account))
+	if a.FakeClaude {
+		mux.HandleFunc("GET /fake/claude/profile", fakeClaudeProfile)
+	}
 	return mux
 }
 
