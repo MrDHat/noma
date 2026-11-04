@@ -27,6 +27,22 @@ jobs:
       - run: make build
       - run: ./bin/noma version && ./bin/noma-server version && ./bin/noma-agent version
 
+  # Noma's development image (build/dev.Dockerfile): it builds, and Noma's own
+  # unit tests and lint pass inside it, as they will in a workspace.
+  dev-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker build -t noma-dev - <build/dev.Dockerfile
+      - name: Build, test and lint Noma inside the image
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -w /src -e HOME=/tmp/home -e GOFLAGS=-buildvcs=false noma-dev sh -euc '
+            go version && golangci-lint version && gh --version && rg --version && jq --version
+            make test
+            golangci-lint run ./...'
+
   # The TLA+ model of the workspace lifecycle, and a check that the code it
   # covers has not changed since someone last confirmed the model matches it.
   lifecycle-model:
