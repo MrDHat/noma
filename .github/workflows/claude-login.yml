@@ -1,0 +1,33 @@
+name: Claude login setting
+
+# Noma shares one Claude login per user through CLAUDE_SECURESTORAGE_CONFIG_DIR,
+# an undocumented Claude setting (decision M3-9). Check it against the pinned
+# Claude and the newest release, on every change and nightly, so a release that
+# drops it fails here before we bump the pin. "latest" is unpinned on purpose;
+# the binary is checked against its release manifest, and the job has no secrets.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        claude: [pinned, latest]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check Claude ${{ matrix.claude }}
+        env:
+          CLAUDE: ${{ matrix.claude }}
+        run: hack/check-claude-login-dir.sh "$CLAUDE"
