@@ -53,3 +53,25 @@ func TestCredentialHelperAsksTheAgent(t *testing.T) {
 		}
 	}
 }
+
+func TestVaultEnvAndClaudeEnv(t *testing.T) {
+	var v vault
+	v.set([]api.Credential{
+		{Name: "b", Env: "B_TOKEN", Value: "2"},
+		{Name: "git", GitHost: "github.com", Value: "not-env"},
+		{Name: "a", Env: "A_TOKEN", Value: "1"},
+	})
+	if got, want := strings.Join(v.env(), ","), "A_TOKEN=1,B_TOKEN=2"; got != want {
+		t.Fatalf("env() = %s, want %s", got, want)
+	}
+	c := &Claude{Bin: "true", Home: "/home/w", Env: func() []string { return []string{"A_TOKEN=1", "HOME=/evil"} }}
+	env := c.command(context.Background()).Env
+	last := map[string]string{}
+	for _, kv := range env {
+		k, val, _ := strings.Cut(kv, "=")
+		last[k] = val
+	}
+	if last["A_TOKEN"] != "1" || last["HOME"] != "/home/w" {
+		t.Fatalf("Claude's env: A_TOKEN=%q HOME=%q", last["A_TOKEN"], last["HOME"])
+	}
+}

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -25,7 +26,12 @@ type Agent struct {
 	codes chan *api.SignInCode
 	// vault holds the workspace's credentials, in memory only.
 	vault vault
+	// restartClaude asks for Claude to restart with new credentials.
+	restartClaude chan struct{}
 }
+
+// errNewCredentials ends a Claude run so it restarts with new credentials.
+var errNewCredentials = errors.New("credentials changed")
 
 // Run sets the workspace up, starts Claude and keeps it running, and serves
 // server messages until ctx is done. A failed setup is reported as an error
@@ -37,6 +43,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	slog.Info("workspace", "id", cfg.ID, "name", cfg.Name)
 	a.codes = make(chan *api.SignInCode, 4)
+	a.restartClaude = make(chan struct{}, 1)
 	// Before the clone, which may need a git token.
 	if _, err := retry(ctx, func() (struct{}, error) { return struct{}{}, a.loadCredentials(ctx) }); err != nil {
 		return err
@@ -56,6 +63,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			Home: os.Getenv("HOME"),
 			Dir:  filepath.Join(a.Dir, repoDir(cfg)),
 			Name: cfg.Name,
+			Env:  a.vault.env,
 		})
 	}()
 	return a.serve(ctx)
@@ -73,13 +81,34 @@ func (a *Agent) superviseClaude(ctx context.Context, c *Claude) {
 		if !a.waitForLogin(ctx, c) {
 			return
 		}
+		// This run starts with the current credentials.
+		select {
+		case <-a.restartClaude:
+		default:
+		}
+		run, stopRun := context.WithCancelCause(ctx)
+		go func() {
+			select {
+			case <-a.restartClaude:
+				stopRun(errNewCredentials)
+			case <-run.Done():
+			}
+		}()
 		start := time.Now()
-		err := c.RemoteControl(ctx, func(link string) {
+		err := c.RemoteControl(run, func(link string) {
 			slog.Info("remote control ready", "link", link)
 			a.report(ctx, api.AgentStatus{Phase: api.PhaseReady, Link: link})
 		})
+		newCredentials := errors.Is(context.Cause(run), errNewCredentials)
+		stopRun(nil)
 		if ctx.Err() != nil {
 			return
+		}
+		if newCredentials {
+			slog.Info("restarting claude with new credentials")
+			a.report(ctx, api.AgentStatus{Phase: api.PhaseClaude, Message: "restarting Claude with new credentials"})
+			wait = time.Second
+			continue
 		}
 		slog.Warn("claude stopped, restarting", "err", err)
 		a.report(ctx, api.AgentStatus{Phase: api.PhaseClaude, Message: "restarting Claude"})
@@ -148,6 +177,8 @@ func (a *Agent) serve(ctx context.Context) error {
 		}
 		switch {
 		case m == nil:
+		case m.Type == api.MessageCredentials:
+			a.refreshCredentials(ctx)
 		case m.Type == api.MessageSignInCode && m.SignInCode != nil:
 			select {
 			case a.codes <- m.SignInCode:
