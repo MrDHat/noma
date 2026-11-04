@@ -39,6 +39,10 @@ type Config struct {
 	ServerURL string
 	// Memory is each workspace's memory request and limit.
 	Memory resource.Quantity
+	// AgentCA is the PEM CA that signs the agent endpoint's certificate.
+	// Workspaces get it from a ConfigMap, so published images work with
+	// any cluster's CA.
+	AgentCA string
 }
 
 // workspaceDir is where a workspace's volume is mounted. Each workspace has
@@ -110,6 +114,19 @@ func volumeClaim(ws *store.Workspace) *corev1ac.PersistentVolumeClaimApplyConfig
 				WithRequests(corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(volumeSize)})))
 }
 
+// caConfigMap holds the CA workspaces trust for noma-server's agent
+// endpoint, in the user's namespace. It is per owner and never deleted.
+func caConfigMap(owner, pem string) *corev1ac.ConfigMapApplyConfiguration {
+	return corev1ac.ConfigMap(caConfigMapName, namespaceFor(owner)).
+		WithLabels(managedLabels(owner)).
+		WithData(map[string]string{"ca.crt": pem})
+}
+
+const (
+	caConfigMapName = "noma-agent-ca"
+	caDir           = "/etc/noma/agent-ca"
+)
+
 // replicas is 1 for a running workspace and 0 for a stopped one, whose
 // volume stays.
 func replicas(ws *store.Workspace) int32 {
@@ -152,6 +169,7 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 							corev1ac.EnvVar().WithName("NOMA_SERVER_URL").WithValue(cfg.ServerURL),
 							corev1ac.EnvVar().WithName("NOMA_TOKEN_FILE").WithValue(tokenPath+"/token"),
 							corev1ac.EnvVar().WithName("NOMA_WORKSPACE_DIR").WithValue(workspaceDir(ws)),
+							corev1ac.EnvVar().WithName("NOMA_CA_FILE").WithValue(caDir+"/ca.crt"),
 							corev1ac.EnvVar().WithName("HOME").WithValue(workspaceDir(ws)+"/home")).
 						WithResources(corev1ac.ResourceRequirements().WithRequests(limits).WithLimits(limits)).
 						WithSecurityContext(corev1ac.SecurityContext().
@@ -160,11 +178,14 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 							WithCapabilities(corev1ac.Capabilities().WithDrop("ALL"))).
 						WithVolumeMounts(
 							corev1ac.VolumeMount().WithName("workspace").WithMountPath(workspaceDir(ws)),
+							corev1ac.VolumeMount().WithName("agent-ca").WithMountPath(caDir).WithReadOnly(true),
 							corev1ac.VolumeMount().WithName("tmp").WithMountPath("/tmp"),
 							corev1ac.VolumeMount().WithName("token").WithMountPath(tokenPath).WithReadOnly(true))).
 					WithVolumes(
 						corev1ac.Volume().WithName("workspace").
 							WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().WithClaimName(ws.ID)),
+						corev1ac.Volume().WithName("agent-ca").
+							WithConfigMap(corev1ac.ConfigMapVolumeSource().WithName(caConfigMapName)),
 						corev1ac.Volume().WithName("tmp").
 							WithEmptyDir(corev1ac.EmptyDirVolumeSource()),
 						// A token for noma-server only, bound to this pod and

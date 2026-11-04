@@ -18,12 +18,14 @@ case "$arch" in
   *) echo "unsupported node architecture: $arch" >&2; exit 1 ;;
 esac
 
-# The agent endpoint's TLS certificate, from a CA only the workspace image trusts.
+# The agent endpoint's TLS certificate, from a CA only workspaces trust.
 if [ ! -f "${CERTS}/ca.crt" ]; then
   go run "${ROOT}/hack/devcerts" "$CERTS"
 fi
-kc -n noma-system create secret tls noma-server-tls \
-  --cert="${CERTS}/tls.crt" --key="${CERTS}/tls.key" --dry-run=client -o yaml | kc apply -f -
+# The server hands the CA to workspaces (a ConfigMap per user namespace).
+kc -n noma-system create secret generic noma-server-tls --type=kubernetes.io/tls \
+  --from-file=tls.crt="${CERTS}/tls.crt" --from-file=tls.key="${CERTS}/tls.key" \
+  --from-file=ca.crt="${CERTS}/ca.crt" --dry-run=client -o yaml | kc apply -f -
 
 out="${ROOT}/bin/linux-${goarch}"
 make -C "$ROOT" build GOOS=linux GOARCH="$goarch" BIN="$out"
@@ -51,7 +53,7 @@ image() {
 }
 image noma-server "${ROOT}/build/server.Dockerfile" "${out}/noma-server"
 image noma-workspace "${ROOT}/build/workspace.Dockerfile" \
-  "${out}/noma-agent" "${out}/fakeclaude" "${CERTS}/ca.crt" -- --build-opt="opt=build-arg:CLAUDE=${CLAUDE}"
+  "${out}/noma-agent" "${out}/fakeclaude" -- --build-opt="opt=build-arg:CLAUDE=${CLAUDE}"
 
 kc apply -f "${ROOT}/deploy/dev/rbac.yaml" -f "${ROOT}/deploy/dev/server.yaml"
 # Real Claude needs room for the Remote Control server and its sessions; the
