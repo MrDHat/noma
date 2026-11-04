@@ -141,6 +141,13 @@ func (a *AgentServer) status(w http.ResponseWriter, r *http.Request, ws *store.W
 	if len(st.Message) > 500 {
 		st.Message = st.Message[:500]
 	}
+	if len(st.ClaudeLastExit) > 500 {
+		st.ClaudeLastExit = st.ClaudeLastExit[:500]
+	}
+	if err := a.Store.SetClaudeHealth(r.Context(), ws.ID, max(st.ClaudeRestarts, 0), st.ClaudeLastExit); err != nil {
+		internalError(w, err)
+		return
+	}
 	signInURL, signInKey := "", ""
 	if st.Phase == api.PhaseSignIn {
 		if st.SignIn == nil || !validSignIn(st.SignIn) {
