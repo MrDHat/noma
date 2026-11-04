@@ -46,10 +46,13 @@ type Workspace struct {
 	Link string `bun:",notnull"`
 	// SignInURL and SignInKey describe a Claude sign-in waiting for a code:
 	// the URL to open and the agent's one-time public key to seal it with.
-	SignInURL string    `bun:"signin_url,notnull"`
-	SignInKey string    `bun:"signin_key,notnull"`
-	CreatedAt time.Time `bun:",notnull,default:current_timestamp"`
-	UpdatedAt time.Time `bun:",notnull,default:current_timestamp"`
+	SignInURL string `bun:"signin_url,notnull"`
+	SignInKey string `bun:"signin_key,notnull"`
+	// ClaudeRestarts and ClaudeLastExit are the agent's last report on Claude.
+	ClaudeRestarts int       `bun:",notnull"`
+	ClaudeLastExit string    `bun:",notnull"`
+	CreatedAt      time.Time `bun:",notnull,default:current_timestamp"`
+	UpdatedAt      time.Time `bun:",notnull,default:current_timestamp"`
 }
 
 // Store wraps the database.
@@ -165,6 +168,15 @@ func (s *Store) SetSignIn(ctx context.Context, id, url, key string) error {
 	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
 		Set("signin_url = ?", url).
 		Set("signin_key = ?", key).
+		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+	return err
+}
+
+// SetClaudeHealth records how often Claude restarted and how it last exited.
+func (s *Store) SetClaudeHealth(ctx context.Context, id string, restarts int, lastExit string) error {
+	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("claude_restarts = ?", restarts).
+		Set("claude_last_exit = ?", lastExit).
 		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
 	return err
 }
