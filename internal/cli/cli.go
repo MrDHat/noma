@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os/exec"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -85,12 +87,30 @@ func up(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Write
 		return err
 	}
 	defer c.Close()
-	ws, err := c.CreateWorkspace(ctx, api.CreateWorkspaceRequest{RepoURL: fs.Arg(0), Name: *name})
+	git := laptopGitIdentity(ctx)
+	if git == nil {
+		fmt.Fprintln(stdout, "warning: git user.name or user.email is not set on this machine; workspaces keep the identity from your last noma up, if any")
+	}
+	ws, err := c.CreateWorkspace(ctx, api.CreateWorkspaceRequest{RepoURL: fs.Arg(0), Name: *name, Git: git})
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "workspace %s created\n", ws.Name)
 	return waitReady(ctx, c, ws.Name, stdin, stdout)
+}
+
+// laptopGitIdentity returns this machine's git user.name and user.email,
+// or nil unless both are set.
+func laptopGitIdentity(ctx context.Context) *api.GitIdentity {
+	get := func(key string) string {
+		out, _ := exec.CommandContext(ctx, "git", "config", "--get", key).Output()
+		return strings.TrimSpace(string(out))
+	}
+	g := &api.GitIdentity{Name: get("user.name"), Email: get("user.email")}
+	if g.Name == "" || g.Email == "" {
+		return nil
+	}
+	return g
 }
 
 // waitReady prints progress until the workspace is ready, and gives up if

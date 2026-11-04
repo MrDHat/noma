@@ -106,6 +106,9 @@ func (a *Agent) setup(ctx context.Context, cfg *api.AgentConfig) error {
 	if err := os.MkdirAll(os.Getenv("HOME"), 0o700); err != nil {
 		return fmt.Errorf("create home: %w", err)
 	}
+	if err := setGitIdentity(ctx, cfg.Git); err != nil {
+		return err
+	}
 	repo := filepath.Join(a.Dir, repoDir(cfg))
 	if _, err := os.Stat(filepath.Join(repo, ".git")); err == nil {
 		return nil // cloned before this pod restarted
@@ -116,6 +119,21 @@ func (a *Agent) setup(ctx context.Context, cfg *api.AgentConfig) error {
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone failed: %v: %s", err, lastLine(out))
+	}
+	return nil
+}
+
+// setGitIdentity writes the owner's git identity to the workspace's global
+// git config at every start, so a change on the laptop reaches workspaces
+// the next time they start.
+func setGitIdentity(ctx context.Context, g *api.GitIdentity) error {
+	if g == nil {
+		return nil
+	}
+	for key, value := range map[string]string{"user.name": g.Name, "user.email": g.Email} {
+		if out, err := exec.CommandContext(ctx, "git", "config", "--global", key, value).CombinedOutput(); err != nil {
+			return fmt.Errorf("set git %s: %v: %s", key, err, lastLine(out))
+		}
 	}
 	return nil
 }
