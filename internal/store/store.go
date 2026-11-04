@@ -52,6 +52,40 @@ type Workspace struct {
 	UpdatedAt time.Time `bun:",notnull,default:current_timestamp"`
 }
 
+// User is one row of the users table: what Noma keeps per user.
+type User struct {
+	bun.BaseModel `bun:"table:users"`
+
+	Name string `bun:",pk"`
+	// GitName and GitEmail are the identity of the user's commits.
+	GitName   string    `bun:",notnull"`
+	GitEmail  string    `bun:",notnull"`
+	CreatedAt time.Time `bun:",notnull,default:current_timestamp"`
+	UpdatedAt time.Time `bun:",notnull,default:current_timestamp"`
+}
+
+// SetGitIdentity records the user's git identity, creating the user's row
+// if needed.
+func (s *Store) SetGitIdentity(ctx context.Context, user, name, email string) error {
+	_, err := s.db.NewInsert().Model(&User{Name: user, GitName: name, GitEmail: email}).
+		On("CONFLICT (name) DO UPDATE").
+		Set("git_name = EXCLUDED.git_name").
+		Set("git_email = EXCLUDED.git_email").
+		Set("updated_at = now()").
+		Exec(ctx)
+	return err
+}
+
+// UserByName returns the user's row, or ErrNotFound.
+func (s *Store) UserByName(ctx context.Context, name string) (*User, error) {
+	u := new(User)
+	err := s.db.NewSelect().Model(u).Where("name = ?", name).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return u, err
+}
+
 // Store wraps the database.
 type Store struct {
 	db *bun.DB
