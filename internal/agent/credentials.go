@@ -65,9 +65,29 @@ func (v *vault) env() []string {
 	return env
 }
 
-// refreshCredentials fetches the credentials again after the server says
-// they changed. A git token takes effect at once; changed environment
-// variables restart Claude, which keeps its link.
+// credentialRefresh is how often the agent fetches its credentials even
+// without a change message, which can be lost, and after a failed fetch.
+var credentialRefresh = time.Minute
+
+// keepCredentials refreshes the credentials when the server says they
+// changed and every credentialRefresh, until ctx is done.
+func (a *Agent) keepCredentials(ctx context.Context) {
+	tick := time.NewTicker(credentialRefresh)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.credentialsChanged:
+		case <-tick.C:
+		}
+		a.refreshCredentials(ctx)
+	}
+}
+
+// refreshCredentials fetches the credentials again. A git token takes
+// effect at once; changed environment variables restart Claude, which
+// keeps its link.
 func (a *Agent) refreshCredentials(ctx context.Context) {
 	before := a.vault.env()
 	if err := a.loadCredentials(ctx); err != nil {

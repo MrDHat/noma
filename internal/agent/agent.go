@@ -26,6 +26,9 @@ type Agent struct {
 	codes chan *api.SignInCode
 	// vault holds the workspace's credentials, in memory only.
 	vault vault
+	// credentialsChanged passes the server's change message to
+	// keepCredentials.
+	credentialsChanged chan struct{}
 	// restartClaude asks for Claude to restart with new credentials.
 	restartClaude chan struct{}
 }
@@ -43,6 +46,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	slog.Info("workspace", "id", cfg.ID, "name", cfg.Name)
 	a.codes = make(chan *api.SignInCode, 4)
+	a.credentialsChanged = make(chan struct{}, 1)
 	a.restartClaude = make(chan struct{}, 1)
 	// Before the clone, which may need a git token.
 	if _, err := retry(ctx, func() (struct{}, error) { return struct{}{}, a.loadCredentials(ctx) }); err != nil {
@@ -51,6 +55,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := a.serveCredentials(ctx); err != nil {
 		return fmt.Errorf("serve credentials: %w", err)
 	}
+	go a.keepCredentials(ctx)
 
 	go func() {
 		if err := a.setup(ctx, cfg); err != nil {
@@ -178,7 +183,10 @@ func (a *Agent) serve(ctx context.Context) error {
 		switch {
 		case m == nil:
 		case m.Type == api.MessageCredentials:
-			a.refreshCredentials(ctx)
+			select {
+			case a.credentialsChanged <- struct{}{}:
+			default: // a refresh is already due
+			}
 		case m.Type == api.MessageSignInCode && m.SignInCode != nil:
 			select {
 			case a.codes <- m.SignInCode:
