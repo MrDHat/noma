@@ -21,6 +21,8 @@ type Agent struct {
 	Dir string
 	// ClaudeBin is the claude binary.
 	ClaudeBin string
+	// ProfileURL is Claude's profile endpoint, for the account check.
+	ProfileURL string
 
 	// codes passes sealed sign-in codes from the message loop to signIn.
 	codes chan *api.SignInCode
@@ -28,10 +30,22 @@ type Agent struct {
 	vault vault
 	// restartClaude asks for Claude to restart with new credentials.
 	restartClaude chan struct{}
+	// restarts and lastExit describe Claude's restarts in this pod; every
+	// report carries them. Only the setup goroutine reports.
+	restarts int
+	lastExit string
 }
 
 // errNewCredentials ends a Claude run so it restarts with new credentials.
 var errNewCredentials = errors.New("credentials changed")
+
+// Claude restarts back off from a second up to a minute. A run shorter
+// than quickRun counts as a crash; maxQuickCrashes in a row stop the
+// restarts with an error, until the workspace is stopped and started.
+const (
+	quickRun        = time.Minute
+	maxQuickCrashes = 5
+)
 
 // Run sets the workspace up, starts Claude and keeps it running, and serves
 // server messages until ctx is done. A failed setup is reported as an error
@@ -77,8 +91,15 @@ func (a *Agent) superviseClaude(ctx context.Context, c *Claude) {
 		a.report(ctx, api.AgentStatus{Phase: api.PhaseError, Message: "configure Claude: " + err.Error()})
 		return
 	}
+	quick := 0
 	for wait := time.Second; ctx.Err() == nil; {
 		if !a.waitForLogin(ctx, c) {
+			return
+		}
+		// The login is shared, so check whose it is before every start, and
+		// again once Claude runs, when it has refreshed an expired token.
+		if err := a.checkAccount(ctx, c); errors.Is(err, errAccountChanged) {
+			a.accountChanged(ctx)
 			return
 		}
 		// This run starts with the current credentials.
@@ -98,10 +119,20 @@ func (a *Agent) superviseClaude(ctx context.Context, c *Claude) {
 		err := c.RemoteControl(run, func(link string) {
 			slog.Info("remote control ready", "link", link)
 			a.report(ctx, api.AgentStatus{Phase: api.PhaseReady, Link: link})
+			go func() {
+				if err := a.checkAccount(run, c); err != nil {
+					stopRun(err)
+				}
+			}()
 		})
 		newCredentials := errors.Is(context.Cause(run), errNewCredentials)
+		changed := errors.Is(context.Cause(run), errAccountChanged)
 		stopRun(nil)
 		if ctx.Err() != nil {
+			return
+		}
+		if changed {
+			a.accountChanged(ctx)
 			return
 		}
 		if newCredentials {
@@ -110,14 +141,31 @@ func (a *Agent) superviseClaude(ctx context.Context, c *Claude) {
 			wait = time.Second
 			continue
 		}
-		slog.Warn("claude stopped, restarting", "err", err)
-		a.report(ctx, api.AgentStatus{Phase: api.PhaseClaude, Message: "restarting Claude"})
-		if time.Since(start) > time.Minute {
-			wait = time.Second
+		if err == nil {
+			err = errors.New("claude remote-control exited")
 		}
+		slog.Warn("claude stopped", "err", err)
+		a.lastExit = err.Error()
+		if time.Since(start) > quickRun {
+			quick, wait = 0, time.Second
+		}
+		if quick++; quick >= maxQuickCrashes {
+			a.report(ctx, api.AgentStatus{Phase: api.PhaseError,
+				Message: fmt.Sprintf("Claude crashed %d times in a row; stop and start the workspace to try again", quick)})
+			return
+		}
+		a.restarts++
+		a.report(ctx, api.AgentStatus{Phase: api.PhaseClaude, Message: "restarting Claude"})
 		sleep(ctx, wait)
 		wait = min(wait*2, time.Minute)
 	}
+}
+
+// accountChanged reports that the login is another account's and leaves
+// Claude stopped. Stop and start the workspace once the login is fixed.
+func (a *Agent) accountChanged(ctx context.Context) {
+	slog.Error("claude account changed; not starting claude")
+	a.report(ctx, api.AgentStatus{Phase: api.PhaseError, Message: errAccountChanged.Error()})
 }
 
 // waitForLogin returns once Claude has a login, running sign-ins until one
@@ -147,16 +195,51 @@ func (a *Agent) setup(ctx context.Context, cfg *api.AgentConfig) error {
 	if err := useCredentialHelper(ctx); err != nil {
 		return fmt.Errorf("set up git credentials: %w", err)
 	}
+	if err := setGitIdentity(ctx, cfg.Git); err != nil {
+		return err
+	}
 	repo := filepath.Join(a.Dir, repoDir(cfg))
 	if _, err := os.Stat(filepath.Join(repo, ".git")); err == nil {
 		return nil // cloned before this pod restarted
 	}
 	a.report(ctx, api.AgentStatus{Phase: api.PhaseCloning, Message: cfg.RepoURL})
-	_ = os.RemoveAll(repo) // a clone cut short by a restart
-	cmd := exec.CommandContext(ctx, "git", "clone", "--", cfg.RepoURL, repo)
+	var err error
+	for try, wait := 1, 2*time.Second; ; try, wait = try+1, wait*2 {
+		if err = clone(ctx, cfg.RepoURL, repo); err == nil || try == cloneTries || ctx.Err() != nil {
+			return err
+		}
+		slog.Warn("clone failed, retrying", "err", err)
+		a.report(ctx, api.AgentStatus{Phase: api.PhaseCloning,
+			Message: fmt.Sprintf("%s (try %d of %d failed, retrying)", cfg.RepoURL, try, cloneTries)})
+		sleep(ctx, wait)
+	}
+}
+
+// cloneTries is how often setup tries the clone: once, then three retries
+// 2, 4 and 8 seconds apart.
+const cloneTries = 4
+
+func clone(ctx context.Context, repoURL, dir string) error {
+	_ = os.RemoveAll(dir) // a clone cut short by a restart or a failed try
+	cmd := exec.CommandContext(ctx, "git", "clone", "--", repoURL, dir)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone failed: %v: %s", err, lastLine(out))
+	}
+	return nil
+}
+
+// setGitIdentity writes the owner's git identity to the workspace's global
+// git config at every start, so a change on the laptop reaches workspaces
+// the next time they start.
+func setGitIdentity(ctx context.Context, g *api.GitIdentity) error {
+	if g == nil {
+		return nil
+	}
+	for key, value := range map[string]string{"user.name": g.Name, "user.email": g.Email} {
+		if out, err := exec.CommandContext(ctx, "git", "config", "--global", key, value).CombinedOutput(); err != nil {
+			return fmt.Errorf("set git %s: %v: %s", key, err, lastLine(out))
+		}
 	}
 	return nil
 }
@@ -194,6 +277,7 @@ func (a *Agent) serve(ctx context.Context) error {
 
 // report sends a status, retrying until the server takes it.
 func (a *Agent) report(ctx context.Context, st api.AgentStatus) {
+	st.ClaudeRestarts, st.ClaudeLastExit = a.restarts, a.lastExit
 	_, _ = retry(ctx, func() (struct{}, error) { return struct{}{}, a.Client.Status(ctx, st) })
 }
 
