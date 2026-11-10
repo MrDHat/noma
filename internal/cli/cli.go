@@ -119,6 +119,9 @@ func waitReady(ctx context.Context, c *Client, name string, stdin *bufio.Reader,
 			}
 		case api.PhaseReady:
 			fmt.Fprintf(stdout, "\nWorkspace %s is ready. Open it in claude.ai/code or the Claude app:\n  %s\n", name, ws.Link)
+			if h := silentHint(ws); h != "" {
+				fmt.Fprintf(stdout, "Note: %s; the workspace may not be reachable.\n", h)
+			}
 			return nil
 		case api.PhaseError:
 			return fmt.Errorf("workspace %s failed: %s", name, ws.Message)
@@ -136,10 +139,23 @@ func waitReady(ctx context.Context, c *Client, name string, stdin *bufio.Reader,
 }
 
 func progress(ws *api.Workspace) string {
-	if ws.Message == "" {
-		return "  " + ws.Phase
+	line := "  " + ws.Phase
+	if ws.Message != "" {
+		line += ": " + ws.Message
 	}
-	return fmt.Sprintf("  %s: %s", ws.Phase, ws.Message)
+	if h := silentHint(ws); h != "" {
+		line += " (" + h + ")"
+	}
+	return line
+}
+
+// silentHint warns that the workspace's agent has stopped checking in, so
+// its phase may be out of date.
+func silentHint(ws *api.Workspace) string {
+	if ws.AgentSilentSeconds == 0 {
+		return ""
+	}
+	return fmt.Sprintf("agent silent for %dm", ws.AgentSilentSeconds/60)
 }
 
 func ls(ctx context.Context, args []string, stdout io.Writer) error {
@@ -160,13 +176,13 @@ func ls(ctx context.Context, args []string, stdout io.Writer) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tPHASE\tRESTARTS\tREPO\tLINK")
+	fmt.Fprintln(tw, "NAME\tPHASE\tRESTARTS\tREPO\tLINK\tNOTE")
 	for _, ws := range list {
 		link := ws.Link
 		if link == "" {
 			link = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", ws.Name, ws.Phase, ws.ClaudeRestarts, ws.RepoURL, link)
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\n", ws.Name, ws.Phase, ws.ClaudeRestarts, ws.RepoURL, link, silentHint(&ws))
 	}
 	return tw.Flush()
 }

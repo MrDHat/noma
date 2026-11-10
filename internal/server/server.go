@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/MrDHat/noma/internal/api"
 	"github.com/MrDHat/noma/internal/store"
@@ -266,6 +267,8 @@ func toAPI(ws *store.Workspace) api.Workspace {
 
 		ClaudeRestarts: ws.ClaudeRestarts,
 		ClaudeLastExit: ws.ClaudeLastExit,
+
+		AgentSilentSeconds: int(agentSilence(ws, time.Now()).Seconds()),
 	}
 }
 
