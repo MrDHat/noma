@@ -34,6 +34,9 @@ type Workspace struct {
 	// SignIn is set while Claude in the workspace waits for a sign-in code.
 	SignIn    *SignIn   `json:"signIn,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
+	// ClaudeRestarts and ClaudeLastExit are as the agent last reported.
+	ClaudeRestarts int    `json:"claudeRestarts,omitempty"`
+	ClaudeLastExit string `json:"claudeLastExit,omitempty"`
 }
 
 // SignIn is a Claude sign-in that needs the user. The CLI opens URL, asks
@@ -95,6 +98,10 @@ type AgentStatus struct {
 	Link string `json:"link,omitempty"`
 	// SignIn is sent with the sign-in phase.
 	SignIn *SignIn `json:"signIn,omitempty"`
+	// ClaudeRestarts counts how often Claude has restarted in this pod, and
+	// ClaudeLastExit says how it last stopped.
+	ClaudeRestarts int    `json:"claudeRestarts,omitempty"`
+	ClaudeLastExit string `json:"claudeLastExit,omitempty"`
 }
 
 // AgentAccount is the body of POST /agent/v1/account: the Claude account
