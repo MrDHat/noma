@@ -49,10 +49,12 @@ type Workspace struct {
 	SignInURL string `bun:"signin_url,notnull"`
 	SignInKey string `bun:"signin_key,notnull"`
 	// ClaudeRestarts and ClaudeLastExit are the agent's last report on Claude.
-	ClaudeRestarts int       `bun:",notnull"`
-	ClaudeLastExit string    `bun:",notnull"`
-	CreatedAt      time.Time `bun:",notnull,default:current_timestamp"`
-	UpdatedAt      time.Time `bun:",notnull,default:current_timestamp"`
+	ClaudeRestarts int    `bun:",notnull"`
+	ClaudeLastExit string `bun:",notnull"`
+	// AgentSeenAt is when the agent last polled, kept to the minute.
+	AgentSeenAt time.Time `bun:",nullzero"`
+	CreatedAt   time.Time `bun:",notnull,default:current_timestamp"`
+	UpdatedAt   time.Time `bun:",notnull,default:current_timestamp"`
 }
 
 // User is one row of the users table: what Noma keeps per user.
@@ -211,6 +213,15 @@ func (s *Store) SetClaudeHealth(ctx context.Context, id string, restarts int, la
 	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
 		Set("claude_restarts = ?", restarts).
 		Set("claude_last_exit = ?", lastExit).
+		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+	return err
+}
+
+// SetAgentSeen records that the workspace's agent polled just now. It
+// leaves updated_at alone: a poll is not a change the reconciler must see.
+func (s *Store) SetAgentSeen(ctx context.Context, id string) error {
+	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("agent_seen_at = now()").
 		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
 	return err
 }
