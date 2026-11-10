@@ -56,6 +56,23 @@ func (c *Client) Status(ctx context.Context, st api.AgentStatus) error {
 	return err
 }
 
+// Credentials fetches the credentials this workspace gets.
+func (c *Client) Credentials(ctx context.Context) (*api.CredentialList, error) {
+	var list api.CredentialList
+	_, err := c.do(ctx, http.MethodGet, "/agent/v1/credentials", nil, &list)
+	return &list, err
+}
+
+// CheckAccount checks the Claude account against the user's pinned one. It
+// returns errAccountChanged if the server says it differs.
+func (c *Client) CheckAccount(ctx context.Context, acct api.AgentAccount) error {
+	status, err := c.do(ctx, http.MethodPost, "/agent/v1/account", acct, nil)
+	if status == http.StatusConflict {
+		return errAccountChanged
+	}
+	return err
+}
+
 // NextMessage waits for the next server message. It returns nil when the
 // long-poll ends without one.
 func (c *Client) NextMessage(ctx context.Context) (*api.AgentMessage, error) {

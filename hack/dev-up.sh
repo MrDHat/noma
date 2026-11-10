@@ -64,6 +64,11 @@ if ! kc -n noma-system get secret noma-server >/dev/null 2>&1; then
     --from-literal=database-url="postgres://noma:${pg_password}@postgres.noma-system:5432/noma?sslmode=disable" \
     --from-literal=admin-token="$(openssl rand -hex 32)"
 fi
+if ! kc -n noma-system get secret noma-secret-key >/dev/null 2>&1; then
+  kc -n noma-system create secret generic noma-secret-key \
+    --from-literal=id=k1 \
+    --from-literal=key="$(openssl rand -base64 32)"
+fi
 "${ROOT}/hack/deploy.sh"
 
 echo "==> CLI config"

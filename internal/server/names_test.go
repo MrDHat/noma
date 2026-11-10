@@ -38,3 +38,21 @@ func TestValidImage(t *testing.T) {
 		}
 	}
 }
+
+func TestValidGitIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, email string
+		want        bool
+	}{
+		{"Ada Lovelace", "ada@example.com", true},
+		{"", "ada@example.com", false},
+		{"Ada", "", false},
+		{"Ada\n[core]", "ada@example.com", false},
+		{"Ada", "ada@example.com\r", false},
+		{strings.Repeat("a", 201), "ada@example.com", false},
+	} {
+		if got := validGitIdentity(&api.GitIdentity{Name: tc.name, Email: tc.email}); got != tc.want {
+			t.Errorf("validGitIdentity(%q, %q) = %v, want %v", tc.name, tc.email, got, tc.want)
+		}
+	}
+}
