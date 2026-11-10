@@ -50,10 +50,24 @@ func readNomaYAML(repo string) (string, error) {
 	return y.Image, nil
 }
 
+// checkImage makes sure a project image can run Noma: git, and the glibc
+// Claude needs. It runs before setup, which uses git.
+func (a *Agent) checkImage(ctx context.Context) error {
+	image := os.Getenv("NOMA_PROJECT_IMAGE")
+	if image == "" {
+		return nil
+	}
+	for _, cmd := range [][]string{{"git", "--version"}, {a.ClaudeBin, "--version"}} {
+		if out, err := exec.CommandContext(ctx, cmd[0], cmd[1:]...).CombinedOutput(); err != nil {
+			return fmt.Errorf("image %s can't run Noma (it needs glibc and git): %s: %v %s", image, filepath.Base(cmd[0]), err, lastLine(out))
+		}
+	}
+	return nil
+}
+
 // useImage makes sure the pod runs the image the repo's noma.yaml names. On
 // another image it reports the one wanted and returns errSwapping: the
-// reconciler replaces the pod. On a project image it checks the image can
-// run Noma: git, and the glibc Claude needs.
+// reconciler replaces the pod.
 func (a *Agent) useImage(ctx context.Context, repo string) error {
 	want, err := readNomaYAML(repo)
 	if err != nil {
@@ -67,14 +81,6 @@ func (a *Agent) useImage(ctx context.Context, repo string) error {
 		return errSwapping
 	case want == "" && current != "":
 		slog.Warn("noma.yaml no longer names an image; staying on the project image", "image", current)
-	}
-	if current == "" {
-		return nil
-	}
-	for _, cmd := range [][]string{{"git", "--version"}, {a.ClaudeBin, "--version"}} {
-		if out, err := exec.CommandContext(ctx, cmd[0], cmd[1:]...).CombinedOutput(); err != nil {
-			return fmt.Errorf("image %s can't run Noma (it needs glibc and git): %s: %v %s", current, filepath.Base(cmd[0]), err, lastLine(out))
-		}
 	}
 	return nil
 }

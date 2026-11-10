@@ -72,7 +72,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	go a.keepCredentials(ctx)
 
 	go func() {
-		err := a.setup(ctx, cfg)
+		err := a.checkImage(ctx)
+		if err == nil {
+			err = a.setup(ctx, cfg)
+		}
 		if err == nil {
 			err = a.useImage(ctx, filepath.Join(a.Dir, repoDir(cfg)))
 		}
