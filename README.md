@@ -22,12 +22,11 @@ Once a workspace is ready, connect through Claude's native Remote Control. The a
 You need Docker, [minikube](https://minikube.sigs.k8s.io), kubectl, Go 1.26 and a Claude Pro, Max, Team or Enterprise plan.
 
 ```bash
-make dev-up    # local cluster with gVisor, Postgres and noma-server
-make build
+make dev-up    # local cluster with gVisor, Postgres and noma-server, and bin/noma
 bin/noma up https://github.com/MrDHat/noma.git
 ```
 
-`noma up` creates the workspace, asks you to sign in to Claude in your browser and paste the code, and prints a `claude.ai/code` link. Open it on your phone or in the browser to work with Claude on Noma itself. `bin/noma rm noma` deletes the workspace, and `make dev-down` deletes the cluster.
+`noma up` creates the workspace, asks you to sign in to Claude in your browser and paste the code, and prints a `claude.ai/code` link. Open it on your phone or in the browser to work with Claude on Noma itself. `bin/noma rm noma` deletes the workspace, and `make dev-down` deletes the cluster. After pulling new code, `make deploy` rebuilds everything, `bin/noma` included; stop and start a workspace to move it onto the new agent.
 
 For development, `make e2e` runs the end-to-end tests against a cluster started with `NOMA_CLAUDE=fake make dev-up`, and `make demo-real` walks through the full demo with real Claude.
 

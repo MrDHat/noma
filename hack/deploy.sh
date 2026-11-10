@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Builds Noma's images inside the dev cluster and rolls out noma-server.
-# make dev-up runs this; run it again (make deploy) after changing the code.
+# Builds Noma's images inside the dev cluster and rolls out noma-server, and
+# builds bin/noma for this machine. make dev-up runs this; run it again
+# (make deploy) after changing the code.
 # NOMA_CLAUDE=fake swaps the pinned Claude Code in the workspace image for
 # the fake one the e2e tests use. NOMA_RELEASE=vX.Y.Z deploys that release's
 # published images instead of building them (make daily-up).
@@ -39,6 +40,8 @@ if [ -n "${NOMA_RELEASE:-}" ]; then
   fi
   CLAUDE=real
 else
+  # The noma CLI for this machine, then the binaries for the images.
+  make -C "$ROOT" build BINARIES=noma
   out="${ROOT}/bin/linux-${goarch}"
   make -C "$ROOT" build GOOS=linux GOARCH="$goarch" BIN="$out"
   CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" go build -o "${out}/fakeclaude" "${ROOT}/test/fakeclaude"
