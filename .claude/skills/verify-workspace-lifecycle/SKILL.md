@@ -124,6 +124,7 @@ Not covered:
 - `SetSignIn` and `SetLink`, which the model folds into `AgentLand`'s `SetPhase` (each has the same `desired = running` guard);
 - the sign-in code relay (`server.signIn`, `AgentServer.Send`);
 - an image report from a pod already on the project image (the model's repo always names one project image);
+- Claude restarting inside a running pod, after a crash or for new credentials (NOM-49). Each restart reports `starting-claude` and then `ready` again, so the phase is still the agent's last report;
 - the agent's own `error` reports. The reconciler tells them from its own error by the message, so the agent must never report `could not create workspace objects`;
 - two phase writes in the same microsecond, which leave `updated_at` equal, so `SetPhaseIfUnchanged` cannot tell them apart;
 - Postgres or Kubernetes losing writes;

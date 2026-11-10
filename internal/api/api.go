@@ -163,5 +163,11 @@ type AgentMessage struct {
 	SignInCode *SignInCode `json:"signInCode,omitempty"`
 }
 
-// MessageSignInCode carries a sealed Claude sign-in code to the agent.
-const MessageSignInCode = "signin-code"
+// Message types.
+const (
+	// MessageSignInCode carries a sealed Claude sign-in code to the agent.
+	MessageSignInCode = "signin-code"
+	// MessageCredentials says the workspace's credentials changed; the
+	// agent fetches them again.
+	MessageCredentials = "credentials-changed"
+)

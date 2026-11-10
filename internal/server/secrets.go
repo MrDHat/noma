@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -89,6 +90,7 @@ func (s *Server) putSecret(w http.ResponseWriter, r *http.Request, user string) 
 		internalError(w, err)
 		return
 	}
+	s.credentialsChanged(r, user)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -117,5 +119,29 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request, user strin
 		internalError(w, err)
 		return
 	}
+	s.credentialsChanged(r, user)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// credentialsChanged tells the user's running workspaces to fetch their
+// credentials again (M3-13). A stopped workspace fetches them when it
+// starts. A message can be lost if the server restarts; the agent then
+// has the old credentials until its next start.
+func (s *Server) credentialsChanged(r *http.Request, user string) {
+	if s.SendToAgent == nil {
+		return
+	}
+	wss, err := s.Store.WorkspacesOf(r.Context(), user)
+	if err != nil {
+		slog.Warn("tell workspaces about new credentials", "err", err)
+		return
+	}
+	for _, ws := range wss {
+		if ws.Desired != store.DesiredRunning {
+			continue
+		}
+		if err := s.SendToAgent(ws.ID, api.AgentMessage{Type: api.MessageCredentials}); err != nil {
+			slog.Warn("tell workspace about new credentials", "workspace", ws.ID, "err", err)
+		}
+	}
 }
