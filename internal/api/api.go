@@ -34,6 +34,9 @@ type Workspace struct {
 	// SignIn is set while Claude in the workspace waits for a sign-in code.
 	SignIn    *SignIn   `json:"signIn,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
+	// AgentSilentSeconds is set when the workspace's agent should be
+	// polling noma-server but hasn't for over two minutes.
+	AgentSilentSeconds int `json:"agentSilentSeconds,omitempty"`
 	// ClaudeRestarts and ClaudeLastExit are as the agent last reported.
 	ClaudeRestarts int    `json:"claudeRestarts,omitempty"`
 	ClaudeLastExit string `json:"claudeLastExit,omitempty"`

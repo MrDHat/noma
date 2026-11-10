@@ -25,6 +25,15 @@ import (
 // longPoll is how long GET /agent/v1/messages waits before answering empty.
 const longPoll = 30 * time.Second
 
+// seenEvery is how often an agent's polls are recorded; silentAfter is how
+// long after the last one ls and attach say the agent has gone quiet. An
+// agent polls at least every longPoll, so a healthy one is never more than
+// seenEvery+longPoll behind.
+const (
+	seenEvery   = time.Minute
+	silentAfter = 2 * time.Minute
+)
+
 // AgentServer serves the in-cluster endpoint that workspace agents dial.
 type AgentServer struct {
 	Store *store.Store
@@ -193,8 +202,14 @@ func (a *AgentServer) status(w http.ResponseWriter, r *http.Request, ws *store.W
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// messages waits up to longPoll for a message for the agent.
+// messages waits up to longPoll for a message for the agent. Each poll is
+// also the agent's heartbeat, recorded at most once a minute.
 func (a *AgentServer) messages(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
+	if time.Since(ws.AgentSeenAt) > seenEvery {
+		if err := a.Store.SetAgentSeen(r.Context(), ws.ID); err != nil {
+			slog.Warn("record agent heartbeat", "workspace", ws.ID, "err", err)
+		}
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), longPoll)
 	defer cancel()
 	select {
@@ -203,6 +218,18 @@ func (a *AgentServer) messages(w http.ResponseWriter, r *http.Request, ws *store
 	case <-ctx.Done():
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// agentSilence is how long the agent of a workspace whose phase it reports
+// has gone without polling, or 0 if that is under silentAfter.
+func agentSilence(ws *store.Workspace, now time.Time) time.Duration {
+	if !agentPhases[ws.Phase] || ws.AgentSeenAt.IsZero() {
+		return 0
+	}
+	if d := now.Sub(ws.AgentSeenAt); d > silentAfter {
+		return d
+	}
+	return 0
 }
 
 // validSignIn accepts only Claude's own sign-in pages, because the CLI opens
