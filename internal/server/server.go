@@ -265,6 +265,9 @@ func toAPI(ws *store.Workspace) api.Workspace {
 		Link:      ws.Link,
 		CreatedAt: ws.CreatedAt,
 
+		ClaudeRestarts: ws.ClaudeRestarts,
+		ClaudeLastExit: ws.ClaudeLastExit,
+
 		AgentSilentSeconds: int(agentSilence(ws, time.Now()).Seconds()),
 	}
 }

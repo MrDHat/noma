@@ -48,6 +48,9 @@ type Workspace struct {
 	// the URL to open and the agent's one-time public key to seal it with.
 	SignInURL string `bun:"signin_url,notnull"`
 	SignInKey string `bun:"signin_key,notnull"`
+	// ClaudeRestarts and ClaudeLastExit are the agent's last report on Claude.
+	ClaudeRestarts int    `bun:",notnull"`
+	ClaudeLastExit string `bun:",notnull"`
 	// AgentSeenAt is when the agent last polled, kept to the minute.
 	AgentSeenAt time.Time `bun:",nullzero"`
 	CreatedAt   time.Time `bun:",notnull,default:current_timestamp"`
@@ -167,6 +170,15 @@ func (s *Store) SetSignIn(ctx context.Context, id, url, key string) error {
 	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
 		Set("signin_url = ?", url).
 		Set("signin_key = ?", key).
+		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+	return err
+}
+
+// SetClaudeHealth records how often Claude restarted and how it last exited.
+func (s *Store) SetClaudeHealth(ctx context.Context, id string, restarts int, lastExit string) error {
+	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("claude_restarts = ?", restarts).
+		Set("claude_last_exit = ?", lastExit).
 		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
 	return err
 }

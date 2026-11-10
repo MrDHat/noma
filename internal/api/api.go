@@ -37,6 +37,9 @@ type Workspace struct {
 	// AgentSilentSeconds is set when the workspace's agent should be
 	// polling noma-server but hasn't for over two minutes.
 	AgentSilentSeconds int `json:"agentSilentSeconds,omitempty"`
+	// ClaudeRestarts and ClaudeLastExit are as the agent last reported.
+	ClaudeRestarts int    `json:"claudeRestarts,omitempty"`
+	ClaudeLastExit string `json:"claudeLastExit,omitempty"`
 }
 
 // SignIn is a Claude sign-in that needs the user. The CLI opens URL, asks
@@ -87,6 +90,10 @@ type AgentStatus struct {
 	Link string `json:"link,omitempty"`
 	// SignIn is sent with the sign-in phase.
 	SignIn *SignIn `json:"signIn,omitempty"`
+	// ClaudeRestarts counts how often Claude has restarted in this pod, and
+	// ClaudeLastExit says how it last stopped.
+	ClaudeRestarts int    `json:"claudeRestarts,omitempty"`
+	ClaudeLastExit string `json:"claudeLastExit,omitempty"`
 }
 
 // AgentMessage is one message from the server to the agent, returned by the

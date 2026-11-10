@@ -176,13 +176,13 @@ func ls(ctx context.Context, args []string, stdout io.Writer) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tPHASE\tREPO\tLINK\tNOTE")
+	fmt.Fprintln(tw, "NAME\tPHASE\tRESTARTS\tREPO\tLINK\tNOTE")
 	for _, ws := range list {
 		link := ws.Link
 		if link == "" {
 			link = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", ws.Name, ws.Phase, ws.RepoURL, link, silentHint(&ws))
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\n", ws.Name, ws.Phase, ws.ClaudeRestarts, ws.RepoURL, link, silentHint(&ws))
 	}
 	return tw.Flush()
 }
