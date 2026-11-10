@@ -20,7 +20,7 @@ func TestListAndAttach(t *testing.T) {
 	if err == nil || !strings.Contains(out, "Paste code:") {
 		t.Fatalf("noma up should stop at the sign-in prompt; err %v:\n%s", err, out)
 	}
-	if got := lsRows(t)["e2e-attach-a"]; len(got) != 4 || got[1] != api.PhaseSignIn || got[3] != "-" {
+	if got := lsRows(t)["e2e-attach-a"]; len(got) != 5 || got[1] != api.PhaseSignIn || got[4] != "-" {
 		t.Fatalf("ls row for e2e-attach-a = %q, want phase sign-in and no link", got)
 	}
 
@@ -33,12 +33,12 @@ func TestListAndAttach(t *testing.T) {
 
 	rows := lsRows(t)
 	for _, name := range []string{"e2e-attach-a", "e2e-attach-b"} {
-		if got := rows[name]; len(got) != 4 || got[1] != api.PhaseReady || got[2] != demoRepo || !linkPattern.MatchString(got[3]) {
+		if got := rows[name]; len(got) != 5 || got[1] != api.PhaseReady || got[3] != demoRepo || !linkPattern.MatchString(got[4]) {
 			t.Fatalf("ls row for %s = %q, want ready with the repo and a link", name, got)
 		}
 	}
 	// Attaching to a ready workspace just prints its link.
-	if out = mustNoma(t, "attach", "e2e-attach-b"); !strings.Contains(out, rows["e2e-attach-b"][3]) {
+	if out = mustNoma(t, "attach", "e2e-attach-b"); !strings.Contains(out, rows["e2e-attach-b"][4]) {
 		t.Fatalf("attach to a ready workspace printed a different link:\n%s", out)
 	}
 

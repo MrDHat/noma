@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/MrDHat/noma/internal/api"
 	"github.com/MrDHat/noma/internal/store"
@@ -74,6 +75,16 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request, user st
 		writeError(w, http.StatusBadRequest, "name must be 1-40 lowercase letters, digits or dashes")
 		return
 	}
+	if req.Git != nil {
+		if !validGitIdentity(req.Git) {
+			writeError(w, http.StatusBadRequest, "git identity must be a name and an email of up to 200 characters, on one line")
+			return
+		}
+		if err := s.Store.SetGitIdentity(r.Context(), user, req.Git.Name, req.Git.Email); err != nil {
+			internalError(w, err)
+			return
+		}
+	}
 	ws, err := s.insertWorkspace(r.Context(), user, req)
 	if errors.Is(err, store.ErrNameTaken) {
 		writeError(w, http.StatusConflict, fmt.Sprintf("workspace %q already exists", req.Name))
@@ -98,6 +109,17 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request, user str
 		list.Workspaces = append(list.Workspaces, toAPI(&rows[i]))
 	}
 	writeJSON(w, http.StatusOK, list)
+}
+
+// validGitIdentity accepts what git config would: a non-empty name and
+// email, each on one line.
+func validGitIdentity(g *api.GitIdentity) bool {
+	for _, v := range []string{g.Name, g.Email} {
+		if v == "" || len(v) > 200 || strings.ContainsAny(v, "\r\n\x00") {
+			return false
+		}
+	}
+	return true
 }
 
 // insertWorkspace stores a new workspace. Without an explicit name it uses
@@ -263,6 +285,11 @@ func toAPI(ws *store.Workspace) api.Workspace {
 		Message:   ws.Message,
 		Link:      ws.Link,
 		CreatedAt: ws.CreatedAt,
+
+		ClaudeRestarts: ws.ClaudeRestarts,
+		ClaudeLastExit: ws.ClaudeLastExit,
+
+		AgentSilentSeconds: int(agentSilence(ws, time.Now()).Seconds()),
 	}
 }
 

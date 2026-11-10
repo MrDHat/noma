@@ -34,6 +34,12 @@ type Workspace struct {
 	// SignIn is set while Claude in the workspace waits for a sign-in code.
 	SignIn    *SignIn   `json:"signIn,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
+	// AgentSilentSeconds is set when the workspace's agent should be
+	// polling noma-server but hasn't for over two minutes.
+	AgentSilentSeconds int `json:"agentSilentSeconds,omitempty"`
+	// ClaudeRestarts and ClaudeLastExit are as the agent last reported.
+	ClaudeRestarts int    `json:"claudeRestarts,omitempty"`
+	ClaudeLastExit string `json:"claudeLastExit,omitempty"`
 }
 
 // SignIn is a Claude sign-in that needs the user. The CLI opens URL, asks
@@ -61,6 +67,15 @@ type CreateWorkspaceRequest struct {
 	RepoURL string `json:"repoUrl"`
 	// Name is optional; the server derives one from the repo URL.
 	Name string `json:"name,omitempty"`
+	// Git is the git identity on the user's laptop, if set there. It
+	// becomes the identity of every workspace the user starts.
+	Git *GitIdentity `json:"git,omitempty"`
+}
+
+// GitIdentity is a git author: user.name and user.email.
+type GitIdentity struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
 }
 
 // Error is the body of every non-2xx response.
@@ -74,6 +89,8 @@ type AgentConfig struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	RepoURL string `json:"repoUrl"`
+	// Git is the owner's git identity, if known.
+	Git *GitIdentity `json:"git,omitempty"`
 }
 
 // AgentStatus is the body of POST /agent/v1/status.
@@ -84,6 +101,17 @@ type AgentStatus struct {
 	Link string `json:"link,omitempty"`
 	// SignIn is sent with the sign-in phase.
 	SignIn *SignIn `json:"signIn,omitempty"`
+	// ClaudeRestarts counts how often Claude has restarted in this pod, and
+	// ClaudeLastExit says how it last stopped.
+	ClaudeRestarts int    `json:"claudeRestarts,omitempty"`
+	ClaudeLastExit string `json:"claudeLastExit,omitempty"`
+}
+
+// AgentAccount is the body of POST /agent/v1/account: the Claude account
+// the workspace's login belongs to. The server answers 409 if it is not the
+// account pinned for the user.
+type AgentAccount struct {
+	Account string `json:"account"`
 }
 
 // AgentMessage is one message from the server to the agent, returned by the

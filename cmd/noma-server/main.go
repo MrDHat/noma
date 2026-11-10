@@ -59,16 +59,25 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("NOMA_WORKSPACE_MEMORY: %w", err)
 	}
+	// With the fake Claude (CI), noma-server stands in for Claude's profile
+	// endpoint so the account check has something to ask.
+	fakeClaude := os.Getenv("NOMA_FAKE_CLAUDE") == "1"
+	agentURL := envOr("NOMA_AGENT_URL", "https://noma-server.noma-system.svc:8443")
+	profileURL := ""
+	if fakeClaude {
+		profileURL = agentURL + "/fake/claude/profile"
+	}
 	rec := reconcile.New(st, kube, reconcile.Config{
-		Image:     envOr("NOMA_WORKSPACE_IMAGE", "noma-workspace:dev"),
-		ServerURL: envOr("NOMA_AGENT_URL", "https://noma-server.noma-system.svc:8443"),
-		Memory:    memory,
+		Image:            envOr("NOMA_WORKSPACE_IMAGE", "noma-workspace:dev"),
+		ServerURL:        agentURL,
+		Memory:           memory,
+		ClaudeProfileURL: profileURL,
 	})
 	go rec.Run(ctx)
 
 	// The CLI API, and the agent endpoint, which only workspaces reach and
 	// which always uses TLS because agents send their token on every request.
-	agents := &server.AgentServer{Store: st, Kube: kube}
+	agents := &server.AgentServer{Store: st, Kube: kube, FakeClaude: fakeClaude}
 	cliAPI := &http.Server{
 		Addr:              envOr("NOMA_LISTEN", ":8080"),
 		Handler:           (&server.Server{Store: st, AdminToken: token, Wake: rec.Wake, SendToAgent: agents.Send}).Handler(),
