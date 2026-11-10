@@ -3,7 +3,7 @@ LDFLAGS := -s -w -X github.com/MrDHat/noma/internal/version.Version=$(VERSION)
 BINARIES := noma noma-server noma-agent
 BIN ?= bin
 
-.PHONY: build test lint fmt dev-up dev-down deploy e2e demo-real verify verify-lifecycle verify-credentials check-claude-login
+.PHONY: build test lint fmt dev-up daily-up dev-down deploy e2e demo-real verify verify-lifecycle verify-credentials check-claude-login
 
 build:
 	@mkdir -p $(BIN)
@@ -25,6 +25,10 @@ dev-up:
 
 deploy:
 	hack/deploy.sh
+
+# The dogfood cluster, from a published release: make daily-up VERSION=v0.3.0
+daily-up:
+	hack/daily-up.sh $(VERSION)
 
 dev-down:
 	hack/dev-down.sh
