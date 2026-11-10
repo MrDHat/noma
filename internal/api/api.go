@@ -67,6 +67,15 @@ type CreateWorkspaceRequest struct {
 	RepoURL string `json:"repoUrl"`
 	// Name is optional; the server derives one from the repo URL.
 	Name string `json:"name,omitempty"`
+	// Git is the git identity on the user's laptop, if set there. It
+	// becomes the identity of every workspace the user starts.
+	Git *GitIdentity `json:"git,omitempty"`
+}
+
+// GitIdentity is a git author: user.name and user.email.
+type GitIdentity struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
 }
 
 // Error is the body of every non-2xx response.
@@ -80,6 +89,8 @@ type AgentConfig struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	RepoURL string `json:"repoUrl"`
+	// Git is the owner's git identity, if known.
+	Git *GitIdentity `json:"git,omitempty"`
 }
 
 // AgentStatus is the body of POST /agent/v1/status.

@@ -128,8 +128,17 @@ func (a *AgentServer) workspaceForToken(ctx context.Context, header string) (*st
 	return ws, nil
 }
 
-func (a *AgentServer) config(w http.ResponseWriter, _ *http.Request, ws *store.Workspace) {
-	writeJSON(w, http.StatusOK, api.AgentConfig{ID: ws.ID, Name: ws.Name, RepoURL: ws.RepoURL})
+func (a *AgentServer) config(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
+	cfg := api.AgentConfig{ID: ws.ID, Name: ws.Name, RepoURL: ws.RepoURL}
+	u, err := a.Store.UserByName(r.Context(), ws.Owner)
+	switch {
+	case err == nil && u.GitName != "":
+		cfg.Git = &api.GitIdentity{Name: u.GitName, Email: u.GitEmail}
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
 }
 
 // agentPhases are the phases an agent may report.
