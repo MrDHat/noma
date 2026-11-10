@@ -13,32 +13,32 @@ import (
 // Demo step 2: two workspaces side by side; ls lists them and attach picks
 // one up after noma up was cut off during its sign-in.
 func TestListAndAttach(t *testing.T) {
+	signOut(t)
 	// No code to paste: noma up gives up at the sign-in, like Ctrl-C.
 	out, err := nomaWithInput(t, "", "up", "--name", "e2e-attach-a", demoRepo)
 	t.Cleanup(func() { _, _ = noma(t, "rm", "e2e-attach-a") })
 	if err == nil || !strings.Contains(out, "Paste code:") {
 		t.Fatalf("noma up should stop at the sign-in prompt; err %v:\n%s", err, out)
 	}
-	mustNoma(t, "up", "--name", "e2e-attach-b", demoRepo)
-	t.Cleanup(func() { _, _ = noma(t, "rm", "e2e-attach-b") })
-
-	rows := lsRows(t)
-	if got := rows["e2e-attach-a"]; len(got) != 4 || got[1] != api.PhaseSignIn || got[3] != "-" {
+	if got := lsRows(t)["e2e-attach-a"]; len(got) != 5 || got[1] != api.PhaseSignIn || got[4] != "-" {
 		t.Fatalf("ls row for e2e-attach-a = %q, want phase sign-in and no link", got)
-	}
-	if got := rows["e2e-attach-b"]; len(got) != 4 || got[1] != api.PhaseReady || got[2] != demoRepo || !linkPattern.MatchString(got[3]) {
-		t.Fatalf("ls row for e2e-attach-b = %q, want ready with the repo and a link", got)
 	}
 
 	out = mustNoma(t, "attach", "e2e-attach-a")
 	if !strings.Contains(out, "Paste code:") || !linkPattern.MatchString(out) {
 		t.Fatalf("attach should finish the sign-in and print the link:\n%s", out)
 	}
-	if got := lsRows(t)["e2e-attach-a"]; got[1] != api.PhaseReady {
-		t.Fatalf("after attach e2e-attach-a is %q, want ready", got[1])
+	mustNoma(t, "up", "--name", "e2e-attach-b", demoRepo)
+	t.Cleanup(func() { _, _ = noma(t, "rm", "e2e-attach-b") })
+
+	rows := lsRows(t)
+	for _, name := range []string{"e2e-attach-a", "e2e-attach-b"} {
+		if got := rows[name]; len(got) != 5 || got[1] != api.PhaseReady || got[3] != demoRepo || !linkPattern.MatchString(got[4]) {
+			t.Fatalf("ls row for %s = %q, want ready with the repo and a link", name, got)
+		}
 	}
 	// Attaching to a ready workspace just prints its link.
-	if out = mustNoma(t, "attach", "e2e-attach-b"); !strings.Contains(out, rows["e2e-attach-b"][3]) {
+	if out = mustNoma(t, "attach", "e2e-attach-b"); !strings.Contains(out, rows["e2e-attach-b"][4]) {
 		t.Fatalf("attach to a ready workspace printed a different link:\n%s", out)
 	}
 
