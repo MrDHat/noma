@@ -106,3 +106,4 @@ Not covered:
 - several noma-server replicas: each holds its own in-memory queues, so a message queued on one replica never reaches an agent polling another. It behaves like a lost message, which the periodic refresh repairs;
 - how long it takes: the model shows Claude gets the latest secret eventually, not within a minute;
 - Claude reading its env more than once per process.
+- Claude stopping for good: after `maxQuickCrashes` quick crashes, or when the account check (NOM-45) finds another account's login. `ClaudeGetsLatest` then holds trivially, because Claude isn't running.
