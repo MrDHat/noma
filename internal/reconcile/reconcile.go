@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -197,9 +198,9 @@ func (r *Reconciler) observe(ctx context.Context, ws *store.Workspace) error {
 	if err != nil {
 		return err
 	}
-	for _, cs := range pod.Status.ContainerStatuses {
-		if w := cs.State.Waiting; w != nil && w.Reason != "ContainerCreating" {
-			return r.setStarting(ctx, ws, w.Reason)
+	for i, cs := range slices.Concat(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses) {
+		if msg := containerProblem(&cs, i < len(pod.Status.InitContainerStatuses)); msg != "" {
+			return r.setStarting(ctx, ws, msg)
 		}
 	}
 	if pod.Status.Phase != corev1.PodRunning {
@@ -209,6 +210,27 @@ func (r *Reconciler) observe(ctx context.Context, ws *store.Workspace) error {
 		return r.setStarting(ctx, ws, "starting agent")
 	}
 	return nil
+}
+
+// containerProblem describes a container that is not running when it
+// should be, naming why it last stopped (such as OOMKilled) when it has
+// restarted. It returns "" for a container that is fine, still being
+// created, or an init container that has finished.
+func containerProblem(cs *corev1.ContainerStatus, init bool) string {
+	if t := cs.State.Terminated; t != nil {
+		if init && t.ExitCode == 0 {
+			return ""
+		}
+		return "restarting after " + t.Reason
+	}
+	w := cs.State.Waiting
+	if w == nil || w.Reason == "ContainerCreating" || w.Reason == "PodInitializing" {
+		return ""
+	}
+	if last := cs.LastTerminationState.Terminated; last != nil && last.Reason != "" {
+		return w.Reason + " after " + last.Reason
+	}
+	return w.Reason
 }
 
 func (r *Reconciler) setStarting(ctx context.Context, ws *store.Workspace, msg string) error {
