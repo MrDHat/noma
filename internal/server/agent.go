@@ -38,6 +38,8 @@ const (
 type AgentServer struct {
 	Store *store.Store
 	Kube  kubernetes.Interface
+	// Wake asks the reconciler to act on a change, such as a new image.
+	Wake func()
 	// Credentials yields the credentials each workspace gets.
 	Credentials CredentialSource
 	// FakeClaude serves a stand-in for Claude's profile endpoint, for
@@ -162,7 +164,25 @@ var claudeLink = regexp.MustCompile(`^https://claude\.ai/code\?environment=env_[
 
 func (a *AgentServer) status(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
 	var st api.AgentStatus
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&st); err != nil || !agentPhases[st.Phase] {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&st); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid status")
+		return
+	}
+	if st.Image != "" {
+		// The project image to swap to; the phase stays as it is.
+		if !api.ValidImage(st.Image) {
+			writeError(w, http.StatusBadRequest, "invalid image")
+			return
+		}
+		if err := a.Store.SetImage(r.Context(), ws.ID, st.Image); err != nil {
+			internalError(w, err)
+			return
+		}
+		a.Wake()
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if !agentPhases[st.Phase] {
 		writeError(w, http.StatusBadRequest, "invalid status")
 		return
 	}

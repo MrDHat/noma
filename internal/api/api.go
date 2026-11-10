@@ -2,7 +2,10 @@
 // noma CLI, noma-server and noma-agent.
 package api
 
-import "time"
+import (
+	"regexp"
+	"time"
+)
 
 // Workspace phases, as reported to the CLI.
 const (
@@ -142,6 +145,9 @@ type AgentStatus struct {
 	Link string `json:"link,omitempty"`
 	// SignIn is sent with the sign-in phase.
 	SignIn *SignIn `json:"signIn,omitempty"`
+	// Image, when set, is the only thing in the report: the image the
+	// repo's noma.yaml names, which this pod is not running yet (M3-17).
+	Image string `json:"image,omitempty"`
 	// ClaudeRestarts counts how often Claude has restarted in this pod, and
 	// ClaudeLastExit says how it last stopped.
 	ClaudeRestarts int    `json:"claudeRestarts,omitempty"`
@@ -171,3 +177,10 @@ const (
 	// agent fetches them again.
 	MessageCredentials = "credentials-changed"
 )
+
+// imageRef is a container image reference: an optional registry host, a
+// path, and a tag and/or digest.
+var imageRef = regexp.MustCompile(`^([a-z0-9-]+(\.[a-z0-9-]+)*(:[0-9]{1,5})?/)?[a-z0-9]+([._-][a-z0-9]+)*(/[a-z0-9]+([._-][a-z0-9]+)*)*(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(@sha256:[a-f0-9]{64})?$`)
+
+// ValidImage reports whether s is a container image reference.
+func ValidImage(s string) bool { return len(s) <= 255 && imageRef.MatchString(s) }

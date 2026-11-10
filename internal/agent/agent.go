@@ -72,7 +72,17 @@ func (a *Agent) Run(ctx context.Context) error {
 	go a.keepCredentials(ctx)
 
 	go func() {
-		if err := a.setup(ctx, cfg); err != nil {
+		err := a.checkImage(ctx)
+		if err == nil {
+			err = a.setup(ctx, cfg)
+		}
+		if err == nil {
+			err = a.useImage(ctx, filepath.Join(a.Dir, repoDir(cfg)))
+		}
+		if errors.Is(err, errSwapping) {
+			return // this pod is about to be replaced
+		}
+		if err != nil {
 			slog.Error("setup failed", "err", err)
 			a.report(ctx, api.AgentStatus{Phase: api.PhaseError, Message: err.Error()})
 			return

@@ -48,6 +48,9 @@ type Workspace struct {
 	// the URL to open and the agent's one-time public key to seal it with.
 	SignInURL string `bun:"signin_url,notnull"`
 	SignInKey string `bun:"signin_key,notnull"`
+	// Image is the project image the repo's noma.yaml names, or "" for the
+	// Noma workspace image.
+	Image string `bun:",notnull"`
 	// ClaudeRestarts and ClaudeLastExit are the agent's last report on Claude.
 	ClaudeRestarts int    `bun:",notnull"`
 	ClaudeLastExit string `bun:",notnull"`
@@ -226,6 +229,16 @@ func (s *Store) SetSignIn(ctx context.Context, id, url, key string) error {
 	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
 		Set("signin_url = ?", url).
 		Set("signin_key = ?", key).
+		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+	return err
+}
+
+// SetImage records the project image the agent found in noma.yaml. Like
+// a link, it is not a phase change: updated_at stays, so the reconciler's
+// phase writes are not refused for it.
+func (s *Store) SetImage(ctx context.Context, id, image string) error {
+	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("image = ?", image).
 		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
 	return err
 }

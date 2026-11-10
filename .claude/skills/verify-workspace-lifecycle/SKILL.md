@@ -66,7 +66,7 @@ Coverage, with the model operators that stand for each piece of code:
 | `internal/server/agent.go`: `workspaceForToken`, `status` | `AgentSend` (auth read), `AgentLand` (`SetPhase`) |
 | `internal/agent/agent.go`: `Run`, `setup`, `superviseClaude`, `report`; `signin.go`: `signIn`'s sign-in report | `StartReports`, `AgentSend` |
 | `internal/reconcile/objects.go`: the pod's ServiceAccount, PVC claim and `HOME` on the volume; the StatefulSet's replicas (`replicas`) and image (NOM-50) | `PodCreate`, `PodRemove`, `PodStart`, `PVCFinalize`, `cloned`/`loggedIn`, `RecApplySTS` |
-| `internal/agent/agent.go`: the `noma.yaml` image report (NOM-50) | `StartReports`' `"image"` |
+| `internal/agent/image.go` (`useImage`, called from `agent.go`'s `Run`): the `noma.yaml` image report (NOM-50) | `StartReports`' `"image"` |
 | `deploy/dev/server.yaml`: replica count and rollout strategy | `Reconcilers` in each config |
 
 A change touches the verification when it does any of these:
@@ -115,12 +115,13 @@ Read the counterexample (with `/statechart`, or `VERBOSE=1`) and ask, step by st
 
 Verified: one workspace, all interleavings of the steps above. Bounds: at most 1 container crash (0 in `stale-error` and `rollout`), 1 stop, and 1 reconciler unless a config says 2.
 
-The image swap (M3-17) was modeled before its code (NOM-50). The rows marked with that issue in the coverage table describe the design on the M3 decisions page; when the code lands, check it against the model. Stop and start are in the code (NOM-38). A run explores every reachable state within those bounds.
+The image swap (M3-17) was modeled before its code and checked against it when NOM-50 landed: the image report changes only the image (not the phase or `updated_at`) and wakes the reconciler, the StatefulSet takes its image from the pass's row, and the agent on the base image reports and then waits for its pod to be replaced. Stop and start are in the code (NOM-38). A run explores every reachable state within those bounds.
 
 Not covered:
 
 - several workspaces or owners, and name reuse;
 - the namespace and NetworkPolicy, which are per owner and never deleted;
+- removing `noma.yaml` from a repo on a project image: the agent keeps the project image and only logs it;
 - `SetSignIn` and `SetLink`, which the model folds into `AgentLand`'s `SetPhase` (each has the same `desired = running` guard);
 - the sign-in code relay (`server.signIn`, `AgentServer.Send`);
 - an image report from a pod already on the project image (the model's repo always names one project image);
