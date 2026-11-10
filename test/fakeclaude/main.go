@@ -3,9 +3,9 @@
 // and files as Claude Code 2.1.316: auth status; auth login, which prints the
 // authorize URL, asks for the code and accepts any code starting with
 // "fake-code-"; and remote-control, which needs a login, a terminal and a
-// trusted directory, records its environment in bridge-pointer.json and
-// prints the claude.ai/code link. It crashes on start while
-// ~/.claude/fake-crash exists.
+// trusted directory, records its environment and main session in
+// bridge-pointer.json and prints the environment's claude.ai/code link. It
+// crashes on start while ~/.claude/fake-crash exists.
 package main
 
 import (
@@ -127,13 +127,13 @@ func remoteControl() {
 	}
 	key := regexp.MustCompile(`[^A-Za-z0-9]`).ReplaceAllString(dir, "-")
 	project := filepath.Join(home, ".claude", "projects", key)
-	// Like Claude, resume the environment recorded for this directory, so
-	// the link survives a restart.
-	env := resumedEnv(filepath.Join(project, "bridge-pointer.json"))
-	if env == "" {
-		env = "env_fake" + randomHex(12)
+	// Like Claude, resume the environment and main session recorded for
+	// this directory, so the link survives a restart.
+	env, session := resumed(filepath.Join(project, "bridge-pointer.json"))
+	if env == "" || session == "" {
+		env, session = "env_fake"+randomHex(12), "session_fake"+randomHex(12)
 	}
-	pointer, _ := json.Marshal(map[string]any{"environmentId": env, "pid": os.Getpid()})
+	pointer, _ := json.Marshal(map[string]any{"sessionId": session, "environmentId": env, "pid": os.Getpid()})
 	if err := os.MkdirAll(project, 0o700); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -149,14 +149,15 @@ func remoteControl() {
 	<-sigs
 }
 
-func resumedEnv(pointer string) string {
+func resumed(pointer string) (env, session string) {
 	var p struct {
+		SessionID     string `json:"sessionId"`
 		EnvironmentID string `json:"environmentId"`
 	}
 	if b, err := os.ReadFile(pointer); err == nil && json.Unmarshal(b, &p) == nil {
-		return p.EnvironmentID
+		return p.EnvironmentID, p.SessionID
 	}
-	return ""
+	return "", ""
 }
 
 func trusted(home, dir string) bool {
