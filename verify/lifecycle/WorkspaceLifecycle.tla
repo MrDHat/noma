@@ -6,7 +6,7 @@
 \*
 \* Each action is one indivisible step in the code: one SQL statement, one
 \* Kubernetes API call, or one controller reaction. Comments name the code.
-\* hack/verify-lifecycle.sh runs every check; .claude/skills/
+\* hack/verify-model.sh lifecycle runs every check; .claude/skills/
 \* verify-workspace-lifecycle/SKILL.md says how to read and update it.
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -214,8 +214,9 @@ RecUnlock(r) ==
                    changed, lost, stops>>
 
 \* ensure: each server-side apply is one API call. A failed one ends the
-\* pass, after setPhase(error) if the snapshot's phase is the reconciler's. Namespace and NetworkPolicy are per
-\* owner and never deleted, so the model leaves them out.
+\* pass, after setPhase(error) if the snapshot's phase is the reconciler's.
+\* Namespace, NetworkPolicy, the agent CA ConfigMap and the shared Claude
+\* login claim are per owner and never deleted, so the model leaves them out.
 RecApply(r, from, to, effect) ==
     /\ rpc[r] = from
     /\ \/ /\ effect
@@ -452,7 +453,7 @@ Spec == Init /\ [][Next]_vars
 FairSpec == Spec /\ Fairness
 
 -----------------------------------------------------------------------------
-\* Properties. hack/verify-lifecycle.sh lists which check holds each one.
+\* Properties. verify/lifecycle/checks lists which check holds each one.
 
 \* A workspace the user deleted shows "deleting" until its row is gone.
 DeleteIsFinal ==

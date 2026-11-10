@@ -25,10 +25,26 @@ import (
 // longPoll is how long GET /agent/v1/messages waits before answering empty.
 const longPoll = 30 * time.Second
 
+// seenEvery is how often an agent's polls are recorded; silentAfter is how
+// long after the last one ls and attach say the agent has gone quiet. An
+// agent polls at least every longPoll, so a healthy one is never more than
+// seenEvery+longPoll behind.
+const (
+	seenEvery   = time.Minute
+	silentAfter = 2 * time.Minute
+)
+
 // AgentServer serves the in-cluster endpoint that workspace agents dial.
 type AgentServer struct {
 	Store *store.Store
 	Kube  kubernetes.Interface
+	// Wake asks the reconciler to act on a change, such as a new image.
+	Wake func()
+	// Credentials yields the credentials each workspace gets.
+	Credentials CredentialSource
+	// FakeClaude serves a stand-in for Claude's profile endpoint, for
+	// workspaces running the fake Claude in CI.
+	FakeClaude bool
 
 	mu    sync.Mutex
 	boxes map[string]chan api.AgentMessage
@@ -40,6 +56,11 @@ func (a *AgentServer) Handler() http.Handler {
 	mux.Handle("GET /agent/v1/workspace", a.authed(a.config))
 	mux.Handle("POST /agent/v1/status", a.authed(a.status))
 	mux.Handle("GET /agent/v1/messages", a.authed(a.messages))
+	mux.Handle("GET /agent/v1/credentials", a.authed(a.credentials))
+	mux.Handle("POST /agent/v1/account", a.authed(a.account))
+	if a.FakeClaude {
+		mux.HandleFunc("GET /fake/claude/profile", fakeClaudeProfile)
+	}
 	return mux
 }
 
@@ -119,8 +140,17 @@ func (a *AgentServer) workspaceForToken(ctx context.Context, header string) (*st
 	return ws, nil
 }
 
-func (a *AgentServer) config(w http.ResponseWriter, _ *http.Request, ws *store.Workspace) {
-	writeJSON(w, http.StatusOK, api.AgentConfig{ID: ws.ID, Name: ws.Name, RepoURL: ws.RepoURL})
+func (a *AgentServer) config(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
+	cfg := api.AgentConfig{ID: ws.ID, Name: ws.Name, RepoURL: ws.RepoURL}
+	u, err := a.Store.UserByName(r.Context(), ws.Owner)
+	switch {
+	case err == nil && u.GitName != "":
+		cfg.Git = &api.GitIdentity{Name: u.GitName, Email: u.GitEmail}
+	case err != nil && !errors.Is(err, store.ErrNotFound):
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
 }
 
 // agentPhases are the phases an agent may report.
@@ -134,12 +164,37 @@ var claudeLink = regexp.MustCompile(`^https://claude\.ai/code\?environment=env_[
 
 func (a *AgentServer) status(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
 	var st api.AgentStatus
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&st); err != nil || !agentPhases[st.Phase] {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&st); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid status")
+		return
+	}
+	if st.Image != "" {
+		// The project image to swap to; the phase stays as it is.
+		if !api.ValidImage(st.Image) {
+			writeError(w, http.StatusBadRequest, "invalid image")
+			return
+		}
+		if err := a.Store.SetImage(r.Context(), ws.ID, st.Image); err != nil {
+			internalError(w, err)
+			return
+		}
+		a.Wake()
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if !agentPhases[st.Phase] {
 		writeError(w, http.StatusBadRequest, "invalid status")
 		return
 	}
 	if len(st.Message) > 500 {
 		st.Message = st.Message[:500]
+	}
+	if len(st.ClaudeLastExit) > 500 {
+		st.ClaudeLastExit = st.ClaudeLastExit[:500]
+	}
+	if err := a.Store.SetClaudeHealth(r.Context(), ws.ID, max(st.ClaudeRestarts, 0), st.ClaudeLastExit); err != nil {
+		internalError(w, err)
+		return
 	}
 	signInURL, signInKey := "", ""
 	if st.Phase == api.PhaseSignIn {
@@ -170,8 +225,14 @@ func (a *AgentServer) status(w http.ResponseWriter, r *http.Request, ws *store.W
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// messages waits up to longPoll for a message for the agent.
+// messages waits up to longPoll for a message for the agent. Each poll is
+// also the agent's heartbeat, recorded at most once a minute.
 func (a *AgentServer) messages(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
+	if time.Since(ws.AgentSeenAt) > seenEvery {
+		if err := a.Store.SetAgentSeen(r.Context(), ws.ID); err != nil {
+			slog.Warn("record agent heartbeat", "workspace", ws.ID, "err", err)
+		}
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), longPoll)
 	defer cancel()
 	select {
@@ -180,6 +241,18 @@ func (a *AgentServer) messages(w http.ResponseWriter, r *http.Request, ws *store
 	case <-ctx.Done():
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// agentSilence is how long the agent of a workspace whose phase it reports
+// has gone without polling, or 0 if that is under silentAfter.
+func agentSilence(ws *store.Workspace, now time.Time) time.Duration {
+	if !agentPhases[ws.Phase] || ws.AgentSeenAt.IsZero() {
+		return 0
+	}
+	if d := now.Sub(ws.AgentSeenAt); d > silentAfter {
+		return d
+	}
+	return 0
 }
 
 // validSignIn accepts only Claude's own sign-in pages, because the CLI opens

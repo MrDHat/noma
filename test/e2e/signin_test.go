@@ -15,6 +15,7 @@ func TestSignInRelaysOnlyCiphertext(t *testing.T) {
 	_, _ = rand.Read(b)
 	code := "fake-code-" + hex.EncodeToString(b)
 
+	signOut(t)
 	out, err := nomaWithInput(t, code+"\n", "up", "--name", "e2e-signin", demoRepo)
 	t.Cleanup(func() { _, _ = noma(t, "rm", "e2e-signin") })
 	if err != nil {
@@ -29,9 +30,8 @@ func TestSignInRelaysOnlyCiphertext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Claude in the workspace got the code: it is logged in.
-	kubectl(t, "-n", userNamespace, "exec", ws.ID+"-0", "--",
-		"test", "-f", "/workspaces/"+ws.ID+"/home/.claude/.credentials.json")
+	// Claude in the workspace got the code: the user's shared login holds it.
+	kubectl(t, "-n", userNamespace, "exec", ws.ID+"-0", "--", "test", "-f", sharedCredentials)
 
 	// The server and Postgres only ever saw it sealed.
 	logs := kubectl(t, "-n", "noma-system", "logs", "deploy/noma-server")
@@ -44,6 +44,7 @@ func TestSignInRelaysOnlyCiphertext(t *testing.T) {
 }
 
 func TestWrongSignInCodeIsAskedAgain(t *testing.T) {
+	signOut(t)
 	out, err := nomaWithInput(t, "wrong\n"+signInCode+"\n", "up", "--name", "e2e-retry", demoRepo)
 	t.Cleanup(func() { _, _ = noma(t, "rm", "e2e-retry") })
 	if err != nil {

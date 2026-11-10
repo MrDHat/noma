@@ -19,12 +19,14 @@ case "$arch" in
   *) echo "unsupported node architecture: $arch" >&2; exit 1 ;;
 esac
 
-# The agent endpoint's TLS certificate, from a CA only the workspace image trusts.
+# The agent endpoint's TLS certificate, from a CA only workspaces trust.
 if [ ! -f "${CERTS}/ca.crt" ]; then
   go run "${ROOT}/hack/devcerts" "$CERTS"
 fi
-kc -n noma-system create secret tls noma-server-tls \
-  --cert="${CERTS}/tls.crt" --key="${CERTS}/tls.key" --dry-run=client -o yaml | kc apply -f -
+# The server hands the CA to workspaces (a ConfigMap per user namespace).
+kc -n noma-system create secret generic noma-server-tls --type=kubernetes.io/tls \
+  --from-file=tls.crt="${CERTS}/tls.crt" --from-file=tls.key="${CERTS}/tls.key" \
+  --from-file=ca.crt="${CERTS}/ca.crt" --dry-run=client -o yaml | kc apply -f -
 
 if [ -n "${NOMA_RELEASE:-}" ]; then
   # The release's images, by digest.
@@ -63,14 +65,20 @@ else
   }
   image noma-server "${ROOT}/build/server.Dockerfile" "${out}/noma-server"
   image noma-workspace "${ROOT}/build/workspace.Dockerfile" \
-    "${out}/noma-agent" "${out}/fakeclaude" "${CERTS}/ca.crt" -- --build-opt="opt=build-arg:CLAUDE=${CLAUDE}"
+    "${out}/noma-agent" "${out}/fakeclaude" -- --build-opt="opt=build-arg:CLAUDE=${CLAUDE}"
+  if [ "$CLAUDE" = fake ]; then
+    # Stand-ins for a repo's own image (noma.yaml), for the e2e tests.
+    image noma-e2e-project "${ROOT}/build/e2e-project.Dockerfile"
+    image noma-e2e-nogit "${ROOT}/build/e2e-project.Dockerfile" -- --build-opt="opt=build-arg:GIT=no"
+  fi
 fi
 
 kc apply -f "${ROOT}/deploy/dev/rbac.yaml" -f "${ROOT}/deploy/dev/server.yaml"
 # Real Claude needs room for the Remote Control server and its sessions; the
 # fake one needs almost nothing, so tests can run several workspaces.
 if [ "$CLAUDE" = real ]; then memory=2Gi; else memory=256Mi; fi
-kc -n noma-system set env deployment/noma-server NOMA_WORKSPACE_MEMORY="$memory" >/dev/null
+if [ "$CLAUDE" = real ]; then fake=0; else fake=1; fi
+kc -n noma-system set env deployment/noma-server NOMA_WORKSPACE_MEMORY="$memory" NOMA_FAKE_CLAUDE="$fake" >/dev/null
 if [ -n "${NOMA_RELEASE:-}" ]; then
   kc -n noma-system patch deployment/noma-server --type=json -p "[
     {\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/image\",\"value\":\"${server_image}\"},

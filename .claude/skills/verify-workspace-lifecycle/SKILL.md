@@ -24,14 +24,14 @@ Three writers race on each workspace: the CLI API, the reconciler, and the works
 ## Run it
 
 ```bash
-make verify-lifecycle            # or hack/verify-lifecycle.sh
-hack/verify-lifecycle.sh rollout # only the checks whose name matches
-VERBOSE=1 hack/verify-lifecycle.sh agent-phase   # TLC's full output, with every state
+make verify-lifecycle                       # or hack/verify-model.sh lifecycle
+hack/verify-model.sh lifecycle rollout      # only the checks whose name matches
+VERBOSE=1 hack/verify-model.sh lifecycle agent-phase   # TLC's full output, with every state
 ```
 
 You need Java 11 or later. The first run downloads TLC 1.7.4 (`tla2tools.jar`, checksum pinned in the script) to `.dev/`, which is gitignored. Set `TLA2TOOLS=/path/to/tla2tools.jar` to use another copy. All checks take about 2 minutes on a laptop.
 
-Each check has an expected result in `CHECKS` in `hack/verify-lifecycle.sh`. The script exits 0 only when every check does what it expects.
+Each check has an expected result in `verify/lifecycle/checks`. The script exits 0 only when every check does what it expects.
 
 | Check | Config | Reconcilers | Kubernetes errors | Pod crashes | Expected |
 | --- | --- | --- | --- | --- | --- |
@@ -49,9 +49,9 @@ A failing check prints the counterexample's steps by TLA+ action name. To read t
 
 None: every check passes.
 
-Found while modeling M3's design, before code: if `noma start` were accepted while the old pod is still stopping, that pod's agent (already `ready`) never reports again and the row stays `starting` for good (`AgentPhaseKept`: `ApiStop` then `ApiStart` with the pod still running). `ApiStart` therefore requires `phase = 'stopped'` (decision M3-25); the stop/start code (NOM-38) must keep that guard. A new finding is a bug in the code, not in the model. List it here with its path, and give its check the expected result `fail <Property>` in `CHECKS`. Do not weaken a property or the model to make it pass.
+Found while modeling M3's design, before code: if `noma start` were accepted while the old pod is still stopping, that pod's agent (already `ready`) never reports again and the row stays `starting` for good (`AgentPhaseKept`: `ApiStop` then `ApiStart` with the pod still running). `ApiStart` therefore requires `phase = 'stopped'` (decision M3-25); the stop/start code (NOM-38) must keep that guard. A new finding is a bug in the code, not in the model. List it here with its path, and give its check the expected result `fail <Property>` in `verify/lifecycle/checks`. Do not weaken a property or the model to make it pass.
 
-When a fix lands, mirror it in the model. The check should then pass. Change its expected result in `CHECKS` to `pass`, and remove the finding from this list.
+When a fix lands, mirror it in the model. The check should then pass. Change its expected result in `verify/lifecycle/checks` to `pass`, and remove the finding from this list.
 
 ## Does my change touch this?
 
@@ -66,7 +66,7 @@ Coverage, with the model operators that stand for each piece of code:
 | `internal/server/agent.go`: `workspaceForToken`, `status` | `AgentSend` (auth read), `AgentLand` (`SetPhase`) |
 | `internal/agent/agent.go`: `Run`, `setup`, `superviseClaude`, `report`; `signin.go`: `signIn`'s sign-in report | `StartReports`, `AgentSend` |
 | `internal/reconcile/objects.go`: the pod's ServiceAccount, PVC claim and `HOME` on the volume; the StatefulSet's replicas (`replicas`) and image (NOM-50) | `PodCreate`, `PodRemove`, `PodStart`, `PVCFinalize`, `cloned`/`loggedIn`, `RecApplySTS` |
-| `internal/agent/agent.go`: the `noma.yaml` image report (NOM-50) | `StartReports`' `"image"` |
+| `internal/agent/image.go` (`useImage`, called from `agent.go`'s `Run`): the `noma.yaml` image report (NOM-50) | `StartReports`' `"image"` |
 | `deploy/dev/server.yaml`: replica count and rollout strategy | `Reconcilers` in each config |
 
 A change touches the verification when it does any of these:
@@ -88,11 +88,11 @@ Comment-only changes and changes to the object specs (labels, security context, 
 git log -1 --format=%H -- verify/lifecycle/covered.sha256
 ```
 
-CI runs `hack/lifecycle-sync.sh check` and `make verify-lifecycle` on every pull request and every push to `main`. The sync check fails when any covered file differs from its recorded hash, even for a change that doesn't touch the model, such as a comment or a NetworkPolicy rule. When it fails:
+CI runs `hack/model-sync.sh lifecycle check` and `make verify-lifecycle` on every pull request and every push to `main`. The sync check fails when any covered file differs from its recorded hash, even for a change that doesn't touch the model, such as a comment or a NetworkPolicy rule. When it fails:
 
 1. Read what changed since the sync commit. The failing check prints the `git diff` command to run.
 2. Decide with the list above whether the change touches the model. If it does, update the model as described below and run `make verify-lifecycle`.
-3. Only once you have confirmed that the model describes the code as it is now, run `hack/lifecycle-sync.sh update` and commit `verify/lifecycle/covered.sha256` with your change. A passing TLC run alone does not show that the model matches the code, so don't run `update` just to make CI green.
+3. Only once you have confirmed that the model describes the code as it is now, run `hack/model-sync.sh lifecycle update` and commit `verify/lifecycle/covered.sha256` with your change. A passing TLC run alone does not show that the model matches the code, so don't run `update` just to make CI green.
 
 To cover a new file, add a line for it to `covered.sha256` (any hash) and to the coverage table, then run `update`.
 
@@ -100,8 +100,8 @@ To cover a new file, add a line for it to `covered.sha256` (any hash) and to the
 
 1. Map each changed line to its operator with the coverage table. Keep one action per indivisible step: one SQL statement, one Kubernetes API call, or one controller reaction. When the code splits a write into two statements, split the action too. Merging steps hides interleavings.
 2. Update the comment above the action so it names the code it stands for.
-3. Run `hack/verify-lifecycle.sh`.
-4. For a new promise, add a property at the bottom of the `.tla` file and a check for it in `CHECKS`. Before you trust it, break the guarding code in a scratch copy of the model and watch the check fail.
+3. Run `make verify-lifecycle`.
+4. For a new promise, add a property at the bottom of the `.tla` file and a check for it in `verify/lifecycle/checks`. Before you trust it, break the guarding code in a scratch copy of the model and watch the check fail.
 
 ## Real bug or modeling error?
 
@@ -115,15 +115,17 @@ Read the counterexample (with `/statechart`, or `VERBOSE=1`) and ask, step by st
 
 Verified: one workspace, all interleavings of the steps above. Bounds: at most 1 container crash (0 in `stale-error` and `rollout`), 1 stop, and 1 reconciler unless a config says 2.
 
-The image swap (M3-17) was modeled before its code (NOM-50). The rows marked with that issue in the coverage table describe the design on the M3 decisions page; when the code lands, check it against the model. Stop and start are in the code (NOM-38). A run explores every reachable state within those bounds.
+The image swap (M3-17) was modeled before its code and checked against it when NOM-50 landed: the image report changes only the image (not the phase or `updated_at`) and wakes the reconciler, the StatefulSet takes its image from the pass's row, and the agent on the base image reports and then waits for its pod to be replaced. Stop and start are in the code (NOM-38). A run explores every reachable state within those bounds.
 
 Not covered:
 
 - several workspaces or owners, and name reuse;
 - the namespace and NetworkPolicy, which are per owner and never deleted;
+- removing `noma.yaml` from a repo on a project image: the agent keeps the project image and only logs it;
 - `SetSignIn` and `SetLink`, which the model folds into `AgentLand`'s `SetPhase` (each has the same `desired = running` guard);
 - the sign-in code relay (`server.signIn`, `AgentServer.Send`);
 - an image report from a pod already on the project image (the model's repo always names one project image);
+- Claude restarting inside a running pod, after a crash or for new credentials (NOM-49). Each restart reports `starting-claude` and then `ready` again, so the phase is still the agent's last report;
 - the agent's own `error` reports. The reconciler tells them from its own error by the message, so the agent must never report `could not create workspace objects`;
 - two phase writes in the same microsecond, which leave `updated_at` equal, so `SetPhaseIfUnchanged` cannot tell them apart;
 - Postgres or Kubernetes losing writes;

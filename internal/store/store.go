@@ -46,10 +46,74 @@ type Workspace struct {
 	Link string `bun:",notnull"`
 	// SignInURL and SignInKey describe a Claude sign-in waiting for a code:
 	// the URL to open and the agent's one-time public key to seal it with.
-	SignInURL string    `bun:"signin_url,notnull"`
-	SignInKey string    `bun:"signin_key,notnull"`
-	CreatedAt time.Time `bun:",notnull,default:current_timestamp"`
-	UpdatedAt time.Time `bun:",notnull,default:current_timestamp"`
+	SignInURL string `bun:"signin_url,notnull"`
+	SignInKey string `bun:"signin_key,notnull"`
+	// Image is the project image the repo's noma.yaml names, or "" for the
+	// Noma workspace image.
+	Image string `bun:",notnull"`
+	// ClaudeRestarts and ClaudeLastExit are the agent's last report on Claude.
+	ClaudeRestarts int    `bun:",notnull"`
+	ClaudeLastExit string `bun:",notnull"`
+	// AgentSeenAt is when the agent last polled, kept to the minute.
+	AgentSeenAt time.Time `bun:",nullzero"`
+	CreatedAt   time.Time `bun:",notnull,default:current_timestamp"`
+	UpdatedAt   time.Time `bun:",notnull,default:current_timestamp"`
+}
+
+// User is one row of the users table: what Noma keeps per user.
+type User struct {
+	bun.BaseModel `bun:"table:users"`
+
+	Name string `bun:",pk"`
+	// GitName and GitEmail are the identity of the user's commits.
+	GitName  string `bun:",notnull"`
+	GitEmail string `bun:",notnull"`
+	// ClaudeAccount is the Claude account the user's shared login must
+	// belong to, pinned the first time a workspace checks it (M3-26).
+	ClaudeAccount string    `bun:",notnull"`
+	CreatedAt     time.Time `bun:",notnull,default:current_timestamp"`
+	UpdatedAt     time.Time `bun:",notnull,default:current_timestamp"`
+}
+
+// SetGitIdentity records the user's git identity, creating the user's row
+// if needed.
+func (s *Store) SetGitIdentity(ctx context.Context, user, name, email string) error {
+	_, err := s.db.NewInsert().Model(&User{Name: user, GitName: name, GitEmail: email}).
+		On("CONFLICT (name) DO UPDATE").
+		Set("git_name = EXCLUDED.git_name").
+		Set("git_email = EXCLUDED.git_email").
+		Set("updated_at = now()").
+		Exec(ctx)
+	return err
+}
+
+// PinClaudeAccount pins account as the user's Claude account if none is
+// pinned yet, and says whether account is the pinned one.
+func (s *Store) PinClaudeAccount(ctx context.Context, user, account string) (bool, error) {
+	_, err := s.db.NewInsert().Model(&User{Name: user, ClaudeAccount: account}).
+		On("CONFLICT (name) DO UPDATE").
+		Set("claude_account = EXCLUDED.claude_account").
+		Set("updated_at = now()").
+		Where("?TableAlias.claude_account = ''").
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	u, err := s.UserByName(ctx, user)
+	if err != nil {
+		return false, err
+	}
+	return u.ClaudeAccount == account, nil
+}
+
+// UserByName returns the user's row, or ErrNotFound.
+func (s *Store) UserByName(ctx context.Context, name string) (*User, error) {
+	u := new(User)
+	err := s.db.NewSelect().Model(u).Where("name = ?", name).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return u, err
 }
 
 // Store wraps the database.
@@ -165,6 +229,34 @@ func (s *Store) SetSignIn(ctx context.Context, id, url, key string) error {
 	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
 		Set("signin_url = ?", url).
 		Set("signin_key = ?", key).
+		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+	return err
+}
+
+// SetImage records the project image the agent found in noma.yaml. Like
+// a link, it is not a phase change: updated_at stays, so the reconciler's
+// phase writes are not refused for it.
+func (s *Store) SetImage(ctx context.Context, id, image string) error {
+	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("image = ?", image).
+		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+	return err
+}
+
+// SetClaudeHealth records how often Claude restarted and how it last exited.
+func (s *Store) SetClaudeHealth(ctx context.Context, id string, restarts int, lastExit string) error {
+	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("claude_restarts = ?", restarts).
+		Set("claude_last_exit = ?", lastExit).
+		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+	return err
+}
+
+// SetAgentSeen records that the workspace's agent polled just now. It
+// leaves updated_at alone: a poll is not a change the reconciler must see.
+func (s *Store) SetAgentSeen(ctx context.Context, id string) error {
+	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
+		Set("agent_seen_at = now()").
 		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
 	return err
 }

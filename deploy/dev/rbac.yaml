@@ -15,6 +15,10 @@ rules:
   - apiGroups: [""]
     resources: [pods]
     verbs: [get, list, watch]
+  # The CA workspaces trust for noma-server, one per user namespace.
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, create, patch]
   - apiGroups: [apps]
     resources: [statefulsets]
     verbs: [get, list, watch, create, patch, delete]

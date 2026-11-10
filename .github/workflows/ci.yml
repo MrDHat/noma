@@ -54,7 +54,19 @@ jobs:
           # The sync check names the last commit that confirmed the model.
           fetch-depth: 0
       - run: make verify-lifecycle
-      - run: hack/lifecycle-sync.sh check
+      - run: hack/model-sync.sh lifecycle check
+
+  # The same for the model of a changed secret reaching running workspaces.
+  credentials-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The sync check names the last commit that confirmed the model.
+          fetch-depth: 0
+      - run: make verify-credentials
+      - run: hack/model-sync.sh credentials check
 
   e2e:
     runs-on: ubuntu-latest
