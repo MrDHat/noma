@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/MrDHat/noma/internal/reconcile"
+	"github.com/MrDHat/noma/internal/secrets"
 	"github.com/MrDHat/noma/internal/server"
 	"github.com/MrDHat/noma/internal/store"
 	"github.com/MrDHat/noma/internal/version"
@@ -40,6 +41,10 @@ func run() error {
 	token := os.Getenv("NOMA_ADMIN_TOKEN")
 	if token == "" {
 		return errors.New("NOMA_ADMIN_TOKEN is not set")
+	}
+	secretKey, err := secrets.ParseKey(os.Getenv("NOMA_SECRET_KEY_ID"), os.Getenv("NOMA_SECRET_KEY"))
+	if err != nil {
+		return fmt.Errorf("NOMA_SECRET_KEY: %w", err)
 	}
 	st, err := store.Open(ctx, os.Getenv("NOMA_DATABASE_URL"))
 	if err != nil {
@@ -80,7 +85,7 @@ func run() error {
 	agents := &server.AgentServer{Store: st, Kube: kube, FakeClaude: fakeClaude}
 	cliAPI := &http.Server{
 		Addr:              envOr("NOMA_LISTEN", ":8080"),
-		Handler:           (&server.Server{Store: st, AdminToken: token, Wake: rec.Wake, SendToAgent: agents.Send}).Handler(),
+		Handler:           (&server.Server{Store: st, AdminToken: token, Wake: rec.Wake, SendToAgent: agents.Send, SecretKey: secretKey}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	agentAPI := &http.Server{

@@ -78,6 +78,33 @@ type GitIdentity struct {
 	Email string `json:"email"`
 }
 
+// SecretRequest is the body of PUT /v1/secrets/{name}: a value and how to
+// deliver it. The value is write-only; no response ever contains it.
+type SecretRequest struct {
+	Value string `json:"value"`
+	// GitHost delivers it as the git credential for this host; Env as this
+	// environment variable. At least one is required.
+	GitHost string `json:"gitHost,omitempty"`
+	Env     string `json:"env,omitempty"`
+	// Repos limits it to repos matching these patterns, like
+	// github.com/acme/*; empty means all of the user's workspaces.
+	Repos []string `json:"repos,omitempty"`
+}
+
+// Secret describes a stored secret, without its value.
+type Secret struct {
+	Name      string    `json:"name"`
+	GitHost   string    `json:"gitHost,omitempty"`
+	Env       string    `json:"env,omitempty"`
+	Repos     []string  `json:"repos,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// SecretList is the response to listing secrets.
+type SecretList struct {
+	Secrets []Secret `json:"secrets"`
+}
+
 // Error is the body of every non-2xx response.
 type Error struct {
 	Error string `json:"error"`

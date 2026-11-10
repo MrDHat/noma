@@ -24,6 +24,7 @@ const usage = `usage:
   noma stop <name>                  stop a workspace, keeping its files
   noma start <name>                 start a stopped workspace again
   noma rm <name>                    delete a workspace and its volume
+  noma secret set|ls|rm             manage secrets delivered to your workspaces
   noma version
 `
 
@@ -50,6 +51,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		err = stop(ctx, args[1:], stdout)
 	case "start":
 		err = start(ctx, args[1:], newLines(stdin), stdout)
+	case "secret":
+		err = secret(ctx, args[1:], stdin, stdout)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
