@@ -160,7 +160,7 @@ var agentPhases = map[string]bool{
 }
 
 // claudeLink is the only kind of link an agent may report.
-var claudeLink = regexp.MustCompile(`^https://claude\.ai/code\?environment=env_[A-Za-z0-9]+$`)
+var claudeLink = regexp.MustCompile(`^https://claude\.ai/code/session_[A-Za-z0-9]+$`)
 
 func (a *AgentServer) status(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
 	var st api.AgentStatus

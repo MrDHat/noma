@@ -67,7 +67,8 @@ echo "OK: same link, file kept"
 marker="noma-demo-$(date +%s).txt"
 cat <<MSG
 
-Open demo-b's link in the Claude app on your phone and send:
+Open demo-b's link in the Claude app on your phone. It should open a
+conversation named demo-b, not a list of environments to pick from. Send:
 
   Create a file named ${marker} in the repo containing "hello from my phone".
 

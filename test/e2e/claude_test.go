@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-var linkPattern = regexp.MustCompile(`https://claude\.ai/code\?environment=env_[A-Za-z0-9]+`)
+var linkPattern = regexp.MustCompile(`https://claude\.ai/code/session_[A-Za-z0-9]+`)
 
 func TestUpPrintsRemoteControlLink(t *testing.T) {
 	out := mustNoma(t, "up", "--name", "e2e-link", demoRepo)

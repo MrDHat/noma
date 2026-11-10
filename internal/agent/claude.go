@@ -32,13 +32,20 @@ type Claude struct {
 }
 
 var (
-	linkPattern = regexp.MustCompile(`https://claude\.ai/code\?environment=(env_[A-Za-z0-9]+)`)
-	envPattern  = regexp.MustCompile(`^env_[A-Za-z0-9]+$`)
-	ansiPattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07`)
+	sessionPattern = regexp.MustCompile(`^(?:session|cse)_([A-Za-z0-9]+)$`)
+	ansiPattern    = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07`)
 )
 
-// Link turns a Remote Control environment ID into the claude.ai/code link.
-func Link(envID string) string { return "https://claude.ai/code?environment=" + envID }
+// Link turns a Remote Control session ID into the session's claude.ai/code
+// link. Claude spells one ID both cse_… and session_…; its links use
+// session_…. It returns "" for anything else.
+func Link(sessionID string) string {
+	m := sessionPattern.FindStringSubmatch(sessionID)
+	if m == nil {
+		return ""
+	}
+	return "https://claude.ai/code/session_" + m[1]
+}
 
 // Seed pre-answers the prompts Claude shows on first start, so it can run
 // unattended: it trusts the checkout and has seen the Remote Control notice.
@@ -86,7 +93,8 @@ func (c *Claude) LoggedIn(ctx context.Context) (bool, error) {
 }
 
 // RemoteControl runs `claude remote-control` in a PTY until it exits or ctx
-// is done. It calls onLink once the environment's link is known. Remote
+// is done. It calls onLink with the link to the main session, the one
+// Remote Control opens in the checkout, once that session is known. Remote
 // Control prompts on a terminal, so it can't run without one.
 func (c *Claude) RemoteControl(ctx context.Context, onLink func(string)) error {
 	cmd := c.command(ctx, "remote-control", "--name", c.Name, "--spawn", "same-dir")
@@ -96,16 +104,11 @@ func (c *Claude) RemoteControl(ctx context.Context, onLink func(string)) error {
 	}
 	defer tty.Close() //nolint:errcheck
 
-	var once sync.Once
-	found := func(envID string) { once.Do(func() { onLink(Link(envID)) }) }
 	tail := &tailBuffer{max: 4 << 10}
-	go func() {
-		// The link is printed, and also recorded in bridge-pointer.json.
-		_, _ = io.Copy(linkWatcher{tail: tail, found: found}, tty)
-	}()
+	go func() { _, _ = io.Copy(tailWriter{tail}, tty) }()
 	stop := make(chan struct{})
 	defer close(stop)
-	go c.watchBridgePointer(stop, found)
+	go c.watchBridgePointer(stop, cmd.Process.Pid, onLink)
 
 	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
 		return fmt.Errorf("claude remote-control exited: %v: %s", err, tail.lastLine())
@@ -113,9 +116,11 @@ func (c *Claude) RemoteControl(ctx context.Context, onLink func(string)) error {
 	return nil
 }
 
-// watchBridgePointer looks for the environment ID Claude records for the
-// checkout under ~/.claude/projects/<path>/bridge-pointer.json.
-func (c *Claude) watchBridgePointer(stop <-chan struct{}, found func(string)) {
+// watchBridgePointer waits for the main session Claude records for the
+// checkout in ~/.claude/projects/<path>/bridge-pointer.json and calls onLink
+// with its link once. It takes only a pointer written by the process with
+// pid, so a file left by an earlier run is never mistaken for this one.
+func (c *Claude) watchBridgePointer(stop <-chan struct{}, pid int, onLink func(string)) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for {
@@ -126,31 +131,30 @@ func (c *Claude) watchBridgePointer(stop <-chan struct{}, found func(string)) {
 		}
 		files, _ := filepath.Glob(filepath.Join(c.Home, ".claude", "projects", "*", "bridge-pointer.json"))
 		for _, f := range files {
-			if id := envIDIn(f); id != "" {
-				found(id)
+			if link := sessionLink(f, pid); link != "" {
+				onLink(link)
 				return
 			}
 		}
 	}
 }
 
-// envIDIn returns the first env_… value in a JSON file. The file's layout is
-// Claude's, so don't depend on field names.
-func envIDIn(path string) string {
+// sessionLink returns the link to the session in a bridge-pointer.json
+// written by pid, or "". Claude Code 2.1.316 writes
+// {"sessionId":"session_…","environmentId":"env_…","pid":…}.
+func sessionLink(path string, pid int) string {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	var v map[string]any
-	if json.Unmarshal(b, &v) != nil {
+	var p struct {
+		SessionID string `json:"sessionId"`
+		PID       int    `json:"pid"`
+	}
+	if json.Unmarshal(b, &p) != nil || p.PID != pid {
 		return ""
 	}
-	for _, x := range v {
-		if s, ok := x.(string); ok && envPattern.MatchString(s) {
-			return s
-		}
-	}
-	return ""
+	return Link(p.SessionID)
 }
 
 func (c *Claude) command(ctx context.Context, args ...string) *exec.Cmd {
@@ -166,17 +170,11 @@ func (c *Claude) command(ctx context.Context, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// linkWatcher scans terminal output for the Remote Control link.
-type linkWatcher struct {
-	tail  *tailBuffer
-	found func(string)
-}
+// tailWriter keeps Claude's terminal output for error messages.
+type tailWriter struct{ tail *tailBuffer }
 
-func (w linkWatcher) Write(p []byte) (int, error) {
+func (w tailWriter) Write(p []byte) (int, error) {
 	w.tail.Write(p)
-	if m := linkPattern.FindStringSubmatch(w.tail.text()); m != nil {
-		w.found(m[1])
-	}
 	return len(p), nil
 }
 
