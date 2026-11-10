@@ -20,7 +20,6 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 pause() { read -r -p "$1 Press Enter to go on... " _; }
 
 NOMA_CLAUDE=real "${ROOT}/hack/dev-up.sh"
-make -C "$ROOT" build >/dev/null
 noma="${ROOT}/bin/noma"
 for ws in demo-a demo-b demo-noma; do "$noma" rm "$ws" >/dev/null 2>&1 || true; done
 
