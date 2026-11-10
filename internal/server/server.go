@@ -284,6 +284,9 @@ func toAPI(ws *store.Workspace) api.Workspace {
 		Message:   ws.Message,
 		Link:      ws.Link,
 		CreatedAt: ws.CreatedAt,
+
+		ClaudeRestarts: ws.ClaudeRestarts,
+		ClaudeLastExit: ws.ClaudeLastExit,
 	}
 }
 
