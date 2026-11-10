@@ -1,12 +1,13 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os/exec"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -23,6 +24,7 @@ const usage = `usage:
   noma stop <name>                  stop a workspace, keeping its files
   noma start <name>                 start a stopped workspace again
   noma rm <name>                    delete a workspace and its volume
+  noma secret set|ls|rm             manage secrets delivered to your workspaces
   noma version
 `
 
@@ -38,17 +40,19 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		fmt.Fprintln(stdout, "noma", version.Version)
 		return 0
 	case "up":
-		err = up(ctx, args[1:], bufio.NewReader(stdin), stdout)
+		err = up(ctx, args[1:], newLines(stdin), stdout)
 	case "ls":
 		err = ls(ctx, args[1:], stdout)
 	case "attach":
-		err = attach(ctx, args[1:], bufio.NewReader(stdin), stdout)
+		err = attach(ctx, args[1:], newLines(stdin), stdout)
 	case "rm":
 		err = rm(ctx, args[1:], stdout)
 	case "stop":
 		err = stop(ctx, args[1:], stdout)
 	case "start":
-		err = start(ctx, args[1:], bufio.NewReader(stdin), stdout)
+		err = start(ctx, args[1:], newLines(stdin), stdout)
+	case "secret":
+		err = secret(ctx, args[1:], stdin, stdout)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -71,7 +75,7 @@ func connect(ctx context.Context) (*Client, error) {
 	return Connect(ctx, cfg)
 }
 
-func up(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Writer) error {
+func up(ctx context.Context, args []string, stdin *lines, stdout io.Writer) error {
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	name := fs.String("name", "", "workspace name (default: the repo name)")
 	if err := fs.Parse(args); err != nil {
@@ -85,7 +89,11 @@ func up(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Write
 		return err
 	}
 	defer c.Close()
-	ws, err := c.CreateWorkspace(ctx, api.CreateWorkspaceRequest{RepoURL: fs.Arg(0), Name: *name})
+	git := laptopGitIdentity(ctx)
+	if git == nil {
+		fmt.Fprintln(stdout, "warning: git user.name or user.email is not set on this machine; workspaces keep the identity from your last noma up, if any")
+	}
+	ws, err := c.CreateWorkspace(ctx, api.CreateWorkspaceRequest{RepoURL: fs.Arg(0), Name: *name, Git: git})
 	if err != nil {
 		return err
 	}
@@ -93,9 +101,23 @@ func up(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Write
 	return waitReady(ctx, c, ws.Name, stdin, stdout)
 }
 
+// laptopGitIdentity returns this machine's git user.name and user.email,
+// or nil unless both are set.
+func laptopGitIdentity(ctx context.Context) *api.GitIdentity {
+	get := func(key string) string {
+		out, _ := exec.CommandContext(ctx, "git", "config", "--get", key).Output()
+		return strings.TrimSpace(string(out))
+	}
+	g := &api.GitIdentity{Name: get("user.name"), Email: get("user.email")}
+	if g.Name == "" || g.Email == "" {
+		return nil
+	}
+	return g
+}
+
 // waitReady prints progress until the workspace is ready, and gives up if
 // it is stopped or deleted. Ctrl-C stops waiting; the workspace keeps going.
-func waitReady(ctx context.Context, c *Client, name string, stdin *bufio.Reader, stdout io.Writer) error {
+func waitReady(ctx context.Context, c *Client, name string, stdin *lines, stdout io.Writer) error {
 	last, answered := "", ""
 	for {
 		ws, err := c.Workspace(ctx, name)
@@ -119,6 +141,9 @@ func waitReady(ctx context.Context, c *Client, name string, stdin *bufio.Reader,
 			}
 		case api.PhaseReady:
 			fmt.Fprintf(stdout, "\nWorkspace %s is ready. Open it in claude.ai/code or the Claude app:\n  %s\n", name, ws.Link)
+			if h := silentHint(ws); h != "" {
+				fmt.Fprintf(stdout, "Note: %s; the workspace may not be reachable.\n", h)
+			}
 			return nil
 		case api.PhaseError:
 			return fmt.Errorf("workspace %s failed: %s", name, ws.Message)
@@ -136,10 +161,23 @@ func waitReady(ctx context.Context, c *Client, name string, stdin *bufio.Reader,
 }
 
 func progress(ws *api.Workspace) string {
-	if ws.Message == "" {
-		return "  " + ws.Phase
+	line := "  " + ws.Phase
+	if ws.Message != "" {
+		line += ": " + ws.Message
 	}
-	return fmt.Sprintf("  %s: %s", ws.Phase, ws.Message)
+	if h := silentHint(ws); h != "" {
+		line += " (" + h + ")"
+	}
+	return line
+}
+
+// silentHint warns that the workspace's agent has stopped checking in, so
+// its phase may be out of date.
+func silentHint(ws *api.Workspace) string {
+	if ws.AgentSilentSeconds == 0 {
+		return ""
+	}
+	return fmt.Sprintf("agent silent for %dm", ws.AgentSilentSeconds/60)
 }
 
 func ls(ctx context.Context, args []string, stdout io.Writer) error {
@@ -160,20 +198,20 @@ func ls(ctx context.Context, args []string, stdout io.Writer) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tPHASE\tREPO\tLINK")
+	fmt.Fprintln(tw, "NAME\tPHASE\tRESTARTS\tREPO\tLINK\tNOTE")
 	for _, ws := range list {
 		link := ws.Link
 		if link == "" {
 			link = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", ws.Name, ws.Phase, ws.RepoURL, link)
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\n", ws.Name, ws.Phase, ws.ClaudeRestarts, ws.RepoURL, link, silentHint(&ws))
 	}
 	return tw.Flush()
 }
 
 // attach picks up a workspace where noma up left it: it shows progress,
 // asks for a pending sign-in and prints the link.
-func attach(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Writer) error {
+func attach(ctx context.Context, args []string, stdin *lines, stdout io.Writer) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: noma attach <name>")
 	}
@@ -218,7 +256,7 @@ func stop(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 }
 
-func start(ctx context.Context, args []string, stdin *bufio.Reader, stdout io.Writer) error {
+func start(ctx context.Context, args []string, stdin *lines, stdout io.Writer) error {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: noma start <name>")
 	}

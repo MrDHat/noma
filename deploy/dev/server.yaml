@@ -53,6 +53,17 @@ spec:
                 secretKeyRef:
                   name: noma-server
                   key: admin-token
+            # Seals stored secrets (M3-12); rows record the key ID.
+            - name: NOMA_SECRET_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: noma-secret-key
+                  key: id
+            - name: NOMA_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: noma-secret-key
+                  key: key
           ports:
             - containerPort: 8080
             - containerPort: 8443

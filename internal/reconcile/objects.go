@@ -43,6 +43,9 @@ type Config struct {
 	// Workspaces get it from a ConfigMap, so published images work with
 	// any cluster's CA.
 	AgentCA string
+	// ClaudeProfileURL overrides Claude's profile endpoint for the account
+	// check; CI points it at noma-server's fake one.
+	ClaudeProfileURL string
 }
 
 // workspaceDir is where a workspace's volume is mounted. Each workspace has
@@ -127,6 +130,27 @@ const (
 	caDir           = "/etc/noma/agent-ca"
 )
 
+// loginClaim is the user's Claude login, shared by all their workspaces:
+// sign in once and every workspace starts signed in. Nothing deletes it
+// with a workspace.
+func loginClaim(owner string) *corev1ac.PersistentVolumeClaimApplyConfiguration {
+	return corev1ac.PersistentVolumeClaim(loginClaimName, namespaceFor(owner)).
+		WithLabels(managedLabels(owner)).
+		WithSpec(corev1ac.PersistentVolumeClaimSpec().
+			WithAccessModes(corev1.ReadWriteOnce).
+			WithResources(corev1ac.VolumeResourceRequirements().
+				WithRequests(corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(loginClaimSize)})))
+}
+
+// The login claim, and where workspaces mount it. Claude keeps its
+// credentials in CLAUDE_SECURESTORAGE_CONFIG_DIR (checked in CI against the
+// latest Claude, M3-9).
+const (
+	loginClaimName = "claude-login"
+	loginClaimSize = "64Mi"
+	loginDir       = "/var/lib/noma/claude-login"
+)
+
 // replicas is 1 for a running workspace and 0 for a stopped one, whose
 // volume stays.
 func replicas(ws *store.Workspace) int32 {
@@ -138,6 +162,17 @@ func replicas(ws *store.Workspace) int32 {
 
 // statefulSet runs the workspace pod: at most one, under gVisor, locked down.
 func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConfiguration {
+	env := []*corev1ac.EnvVarApplyConfiguration{
+		corev1ac.EnvVar().WithName("NOMA_SERVER_URL").WithValue(cfg.ServerURL),
+		corev1ac.EnvVar().WithName("NOMA_TOKEN_FILE").WithValue(tokenPath + "/token"),
+		corev1ac.EnvVar().WithName("NOMA_WORKSPACE_DIR").WithValue(workspaceDir(ws)),
+		corev1ac.EnvVar().WithName("NOMA_CA_FILE").WithValue(caDir + "/ca.crt"),
+		corev1ac.EnvVar().WithName("HOME").WithValue(workspaceDir(ws) + "/home"),
+		corev1ac.EnvVar().WithName("CLAUDE_SECURESTORAGE_CONFIG_DIR").WithValue(loginDir),
+	}
+	if cfg.ClaudeProfileURL != "" {
+		env = append(env, corev1ac.EnvVar().WithName("NOMA_CLAUDE_PROFILE_URL").WithValue(cfg.ClaudeProfileURL))
+	}
 	limits := corev1.ResourceList{
 		corev1.ResourceMemory: cfg.Memory,
 		corev1.ResourceCPU:    resource.MustParse(workspaceCPU),
@@ -165,12 +200,7 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 						WithName("workspace").
 						WithImage(cfg.Image).
 						WithImagePullPolicy(corev1.PullIfNotPresent).
-						WithEnv(
-							corev1ac.EnvVar().WithName("NOMA_SERVER_URL").WithValue(cfg.ServerURL),
-							corev1ac.EnvVar().WithName("NOMA_TOKEN_FILE").WithValue(tokenPath+"/token"),
-							corev1ac.EnvVar().WithName("NOMA_WORKSPACE_DIR").WithValue(workspaceDir(ws)),
-							corev1ac.EnvVar().WithName("NOMA_CA_FILE").WithValue(caDir+"/ca.crt"),
-							corev1ac.EnvVar().WithName("HOME").WithValue(workspaceDir(ws)+"/home")).
+						WithEnv(env...).
 						WithResources(corev1ac.ResourceRequirements().WithRequests(limits).WithLimits(limits)).
 						WithSecurityContext(corev1ac.SecurityContext().
 							WithAllowPrivilegeEscalation(false).
@@ -179,6 +209,7 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 						WithVolumeMounts(
 							corev1ac.VolumeMount().WithName("workspace").WithMountPath(workspaceDir(ws)),
 							corev1ac.VolumeMount().WithName("agent-ca").WithMountPath(caDir).WithReadOnly(true),
+							corev1ac.VolumeMount().WithName("login").WithMountPath(loginDir),
 							corev1ac.VolumeMount().WithName("tmp").WithMountPath("/tmp"),
 							corev1ac.VolumeMount().WithName("token").WithMountPath(tokenPath).WithReadOnly(true))).
 					WithVolumes(
@@ -186,6 +217,8 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 							WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().WithClaimName(ws.ID)),
 						corev1ac.Volume().WithName("agent-ca").
 							WithConfigMap(corev1ac.ConfigMapVolumeSource().WithName(caConfigMapName)),
+						corev1ac.Volume().WithName("login").
+							WithPersistentVolumeClaim(corev1ac.PersistentVolumeClaimVolumeSource().WithClaimName(loginClaimName)),
 						corev1ac.Volume().WithName("tmp").
 							WithEmptyDir(corev1ac.EmptyDirVolumeSource()),
 						// A token for noma-server only, bound to this pod and

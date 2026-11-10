@@ -23,6 +23,9 @@ const (
 	signInTimeout = 15 * time.Minute
 	// loginExitTimeout is how long Claude gets to finish after the code.
 	loginExitTimeout = 2 * time.Minute
+	// sharedLoginCheck is how often a waiting sign-in checks whether
+	// another workspace has signed the user in meanwhile.
+	sharedLoginCheck = 3 * time.Second
 )
 
 var (
@@ -33,7 +36,8 @@ var (
 // signIn runs one `claude auth login`. It sends the sign-in URL and a
 // one-time public key to the server, waits for the user's code sealed to
 // that key, and types it into Claude. Only this process ever sees the code,
-// and the key never outlives the attempt.
+// and the key never outlives the attempt. If another of the user's
+// workspaces signs in first, it gives up the attempt: the login is shared.
 func (a *Agent) signIn(ctx context.Context, c *Claude) error {
 	ctx, cancel := context.WithTimeout(ctx, signInTimeout)
 	defer cancel()
@@ -74,9 +78,18 @@ func (a *Agent) signIn(ctx context.Context, c *Claude) error {
 		SignIn:  &api.SignIn{URL: url, PublicKey: publicKey},
 	})
 
+	check := time.NewTicker(sharedLoginCheck)
+	defer check.Stop()
 	for {
 		var m *api.SignInCode
 		select {
+		case <-check.C:
+			// The login is shared by the user's workspaces (M3-5).
+			if ok, _ := c.LoggedIn(ctx); ok {
+				a.report(ctx, api.AgentStatus{Phase: api.PhaseClaude, Message: "signed in from another workspace"})
+				return nil
+			}
+			continue
 		case m = <-a.codes:
 		case err := <-exited:
 			return fmt.Errorf("claude auth login exited: %v: %s", err, tail.lastLine())

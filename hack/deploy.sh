@@ -59,6 +59,7 @@ kc apply -f "${ROOT}/deploy/dev/rbac.yaml" -f "${ROOT}/deploy/dev/server.yaml"
 # Real Claude needs room for the Remote Control server and its sessions; the
 # fake one needs almost nothing, so tests can run several workspaces.
 if [ "$CLAUDE" = real ]; then memory=2Gi; else memory=256Mi; fi
-kc -n noma-system set env deployment/noma-server NOMA_WORKSPACE_MEMORY="$memory" >/dev/null
+if [ "$CLAUDE" = real ]; then fake=0; else fake=1; fi
+kc -n noma-system set env deployment/noma-server NOMA_WORKSPACE_MEMORY="$memory" NOMA_FAKE_CLAUDE="$fake" >/dev/null
 kc -n noma-system rollout restart deployment/noma-server
 kc -n noma-system rollout status deployment/noma-server --timeout=120s
