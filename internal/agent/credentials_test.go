@@ -2,10 +2,15 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/MrDHat/noma/internal/api"
 )
@@ -73,5 +78,50 @@ func TestVaultEnvAndClaudeEnv(t *testing.T) {
 	}
 	if last["A_TOKEN"] != "1" || last["HOME"] != "/home/w" {
 		t.Fatalf("Claude's env: A_TOKEN=%q HOME=%q", last["A_TOKEN"], last["HOME"])
+	}
+}
+
+// A changed secret reaches Claude without a change message, and after a
+// failed fetch: the cases the secret-delivery model found.
+func TestCredentialsRefreshWithoutMessage(t *testing.T) {
+	old := credentialRefresh
+	credentialRefresh = 10 * time.Millisecond
+	t.Cleanup(func() { credentialRefresh = old })
+
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/agent/v1/credentials" {
+			http.NotFound(w, r)
+			return
+		}
+		if calls.Add(1) == 1 {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(api.CredentialList{Credentials: []api.Credential{{Name: "k", Env: "API_KEY", Value: "new"}}})
+	}))
+	t.Cleanup(srv.Close)
+	token := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(token, []byte("t"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &Agent{
+		Client:             &Client{BaseURL: srv.URL, TokenFile: token, HTTP: srv.Client()},
+		credentialsChanged: make(chan struct{}, 1),
+		restartClaude:      make(chan struct{}, 1),
+	}
+	a.vault.set([]api.Credential{{Name: "k", Env: "API_KEY", Value: "old"}})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go a.keepCredentials(ctx)
+
+	select {
+	case <-a.restartClaude:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Claude was not restarted; %d fetches", calls.Load())
+	}
+	if got := a.vault.env(); len(got) != 1 || got[0] != "API_KEY=new" {
+		t.Fatalf("vault env = %v", got)
 	}
 }

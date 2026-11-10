@@ -5,7 +5,7 @@ description: Model-check how a changed secret reaches a running workspace's Clau
 
 # Verify secret delivery
 
-When you change a secret with `noma secret`, noma-server queues a `credentials-changed` message for each of your running workspaces. The agent long-polls for it, fetches its credentials again, and restarts Claude if its environment variables changed. The server, the agent's message loop and Claude's supervisor all act on the same secret, and messages can be lost. `verify/credentials/SecretDelivery.tla` models one workspace and one env secret, and TLC checks every order of their steps.
+When you change a secret with `noma secret`, noma-server queues a `credentials-changed` message for each of your running workspaces. The agent long-polls for it and fetches its credentials again, and it also fetches them every minute, because a message can be lost. It restarts Claude if its environment variables changed. The server, the agent's message loop and Claude's supervisor all act on the same secret, and messages can be lost. `verify/credentials/SecretDelivery.tla` models one workspace and one env secret, and TLC checks every order of their steps.
 
 ## What it promises
 
@@ -30,19 +30,19 @@ Each check's expected result is in `verify/credentials/checks`. The script exits
 | Check | Config | Messages lost | Fetches fail | Expected |
 | --- | --- | --- | --- | --- |
 | `delivery` | `delivery.cfg` | no | no | pass |
-| `lost-message` | `lost-message.cfg` | yes | no | fail `ClaudeGetsLatest` |
-| `failed-fetch` | `failed-fetch.cfg` | no | yes | fail `ClaudeGetsLatest` |
+| `lost-message` | `lost-message.cfg` | yes | no | pass |
+| `failed-fetch` | `failed-fetch.cfg` | no | yes | pass |
+| `all-faults` | `all-faults.cfg` | yes | yes | pass |
 
-Each config allows 2 secret changes and a queue of 2. Fairness says the server eventually answers a fetch, the agent's loops keep running, and Claude's restart signal is acted on. Claude crashing and messages getting lost are allowed but never forced.
+Each config allows 2 secret changes and a queue of 2. Fairness says the server eventually answers a fetch, the agent's loops and its ticker keep running, and Claude's restart signal is acted on. Claude crashing and messages getting lost are allowed but never forced.
 
 Read every result with the pstack `/statechart` skill on `verify/credentials/SecretDelivery.tla` and that check's config. It gives a failing check's shortest path in plain words, and a chart of the states when a check passes.
 
 ## Known findings
 
-1. **A lost message leaves the workspace on the old secret** (`lost-message`). Path: you change the secret → `AgentServer.messages` takes the message off the queue → the long-poll response never reaches the agent (the connection drops, or noma-server restarts and its in-memory queue is gone) → nothing sends it again. The same happens when `Send` finds the queue full.
-2. **A failed fetch leaves the workspace on the old secret** (`failed-fetch`). Path: you change the secret → the agent gets the message → `refreshCredentials`'s `loadCredentials` fails → it logs and returns, and nothing tries again.
+None: every check passes.
 
-In both cases the workspace stays on the old secret until the pod restarts or you change a secret again.
+Found when the model was written (NOM-49), and fixed by the agent's periodic refresh: a lost change message, or a failed fetch, left a workspace on the old secret until its pod restarted. Without `FetchOnTick` (and its fairness), `lost-message`, `failed-fetch` and `all-faults` fail again.
 
 A new finding is a bug in the code, not in the model. List it here with its path, and set its check's expected result to `fail <Property>` in `verify/credentials/checks`. Do not weaken the property or the model to make it pass. When a fix lands, mirror it in the model, set the check to `pass`, and remove the finding from this list.
 
@@ -52,9 +52,10 @@ A new finding is a bug in the code, not in the model. List it here with its path
 | --- | --- |
 | `internal/server/secrets.go`: `putSecret`, `deleteSecret`, `credentialsChanged` | `YouChangeSecret` |
 | `internal/server/agent.go`: `Send` (drops when the queue is full), `box`, `messages` | `YouChangeSecret`, `AgentGetsMessage`, `MessageLost` |
-| `internal/agent/agent.go`: `serve` (calls `refreshCredentials` in the message loop) | `AgentGetsMessage` |
+| `internal/agent/agent.go`: `serve` (a non-blocking send on `credentialsChanged`) | `AgentGetsMessage` |
+| `internal/agent/credentials.go`: `keepCredentials` (on a message or every `credentialRefresh`) | `FetchOnMessage`, `FetchOnTick` |
 | `internal/agent/credentials.go`: `refreshCredentials`, `loadCredentials`, `vault` | `FetchOk`, `FetchFails` |
-| `internal/agent/agent.go`: `superviseClaude` (drains `restartClaude`, the run's watcher, `errNewCredentials`), `Run` (loads credentials before Claude) | `ClaudeBegins`, `RestartForNewSecret`, `ClaudeExits`, `Init` |
+| `internal/agent/agent.go`: `superviseClaude` (drains `restartClaude`, the run's watcher, `errNewCredentials`), `Run` (loads credentials before Claude, starts `keepCredentials`) | `ClaudeBegins`, `RestartForNewSecret`, `ClaudeExits`, `Init` |
 | `internal/agent/claude.go`: `command` reads `Env` | `ClaudeLaunches` |
 
 A change touches the verification when it:
@@ -87,7 +88,7 @@ CI's `credentials-model` job runs `make verify-credentials` and `hack/model-sync
 1. Map each changed line to its action with the table. Keep one action per indivisible step: one HTTP request, one channel send or receive, one read of the vault.
 2. Update the comment above the action so it names the code.
 3. Run `make verify-credentials`.
-4. For a new promise, add a property at the bottom of the `.tla` file and a check in `verify/credentials/checks`. Before you trust it, break the guarding code in a scratch copy of the model and watch the check fail. For `ClaudeGetsLatest`, `delivery` fails when `FetchOk` stops signalling a restart, or when `ClaudeLaunches` keeps the old env.
+4. For a new promise, add a property at the bottom of the `.tla` file and a check in `verify/credentials/checks`. Before you trust it, break the guarding code in a scratch copy of the model and watch the check fail. For `ClaudeGetsLatest`, `delivery` fails when `FetchOk` stops signalling a restart, or when `ClaudeLaunches` keeps the old env; the fault checks fail without `FetchOnTick`. Remove an action from `Fairness` as well as from `Next`: fairness on an action `Next` can't take rules out the very runs you want to see.
 
 ## Real bug or modeling error?
 
@@ -102,6 +103,7 @@ Not covered:
 - several workspaces, or workspaces that start or stop while you change a secret (`credentialsChanged` sends only to workspaces whose desired state is running; a starting pod loads credentials in `Run`);
 - git tokens, which take effect at once through the credential helper;
 - which secrets a workspace's rules match (`repoMatches`, tested in `internal/server`);
-- several noma-server replicas: each holds its own in-memory queues, so a message queued on one replica never reaches an agent polling another. It behaves like a lost message;
+- several noma-server replicas: each holds its own in-memory queues, so a message queued on one replica never reaches an agent polling another. It behaves like a lost message, which the periodic refresh repairs;
+- how long it takes: the model shows Claude gets the latest secret eventually, not within a minute;
 - Claude reading its env more than once per process.
 - Claude stopping for good: after `maxQuickCrashes` quick crashes, or when the account check (NOM-45) finds another account's login. `ClaudeGetsLatest` then holds trivially, because Claude isn't running.
