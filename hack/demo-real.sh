@@ -33,7 +33,7 @@ pod_of() {
   done
 }
 # link_of NAME prints the workspace's Remote Control link from noma ls.
-link_of() { "$noma" ls | awk -v n="$1" '$1 == n { print $NF }'; }
+link_of() { "$noma" ls | awk -v n="$1" '$1 == n { print $5 }'; }
 # wait_ready NAME waits until noma ls shows the workspace ready.
 wait_ready() {
   for _ in $(seq 1 120); do
