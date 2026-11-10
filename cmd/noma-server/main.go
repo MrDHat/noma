@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/MrDHat/noma/internal/reconcile"
+	"github.com/MrDHat/noma/internal/secrets"
 	"github.com/MrDHat/noma/internal/server"
 	"github.com/MrDHat/noma/internal/store"
 	"github.com/MrDHat/noma/internal/version"
@@ -41,6 +42,10 @@ func run() error {
 	if token == "" {
 		return errors.New("NOMA_ADMIN_TOKEN is not set")
 	}
+	secretKey, err := secrets.ParseKey(os.Getenv("NOMA_SECRET_KEY_ID"), os.Getenv("NOMA_SECRET_KEY"))
+	if err != nil {
+		return fmt.Errorf("NOMA_SECRET_KEY: %w", err)
+	}
 	st, err := store.Open(ctx, os.Getenv("NOMA_DATABASE_URL"))
 	if err != nil {
 		return err
@@ -59,19 +64,34 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("NOMA_WORKSPACE_MEMORY: %w", err)
 	}
+	tlsDir := envOr("NOMA_TLS_DIR", "/etc/noma/tls")
+	agentCA, err := os.ReadFile(tlsDir + "/ca.crt")
+	if err != nil {
+		return fmt.Errorf("agent CA: %w", err)
+	}
+	// With the fake Claude (CI), noma-server stands in for Claude's profile
+	// endpoint so the account check has something to ask.
+	fakeClaude := os.Getenv("NOMA_FAKE_CLAUDE") == "1"
+	agentURL := envOr("NOMA_AGENT_URL", "https://noma-server.noma-system.svc:8443")
+	profileURL := ""
+	if fakeClaude {
+		profileURL = agentURL + "/fake/claude/profile"
+	}
 	rec := reconcile.New(st, kube, reconcile.Config{
-		Image:     envOr("NOMA_WORKSPACE_IMAGE", "noma-workspace:dev"),
-		ServerURL: envOr("NOMA_AGENT_URL", "https://noma-server.noma-system.svc:8443"),
-		Memory:    memory,
+		AgentCA:          string(agentCA),
+		Image:            envOr("NOMA_WORKSPACE_IMAGE", "noma-workspace:dev"),
+		ServerURL:        agentURL,
+		Memory:           memory,
+		ClaudeProfileURL: profileURL,
 	})
 	go rec.Run(ctx)
 
 	// The CLI API, and the agent endpoint, which only workspaces reach and
 	// which always uses TLS because agents send their token on every request.
-	agents := &server.AgentServer{Store: st, Kube: kube}
+	agents := &server.AgentServer{Store: st, Kube: kube, Wake: rec.Wake, Credentials: server.StoredCredentials{Store: st, Key: secretKey}, FakeClaude: fakeClaude}
 	cliAPI := &http.Server{
 		Addr:              envOr("NOMA_LISTEN", ":8080"),
-		Handler:           (&server.Server{Store: st, AdminToken: token, Wake: rec.Wake, SendToAgent: agents.Send}).Handler(),
+		Handler:           (&server.Server{Store: st, AdminToken: token, Wake: rec.Wake, SendToAgent: agents.Send, SecretKey: secretKey}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	agentAPI := &http.Server{
@@ -79,8 +99,6 @@ func run() error {
 		Handler:           agents.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	tlsDir := envOr("NOMA_TLS_DIR", "/etc/noma/tls")
-
 	errc := make(chan error, 2)
 	go func() { errc <- cliAPI.ListenAndServe() }()
 	go func() { errc <- agentAPI.ListenAndServeTLS(tlsDir+"/tls.crt", tlsDir+"/tls.key") }()

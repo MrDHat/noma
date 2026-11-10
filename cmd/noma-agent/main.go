@@ -18,6 +18,13 @@ func main() {
 		fmt.Println("noma-agent", version.Version)
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "credential" {
+		if err := agent.CredentialHelper(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if code, handled := agent.RunAsInit(); handled {
 		os.Exit(code)
 	}
@@ -40,9 +47,10 @@ func run(ctx context.Context) error {
 	}
 	slog.Info("noma-agent started", "version", version.Version)
 	return (&agent.Agent{
-		Client:    c,
-		Dir:       os.Getenv("NOMA_WORKSPACE_DIR"),
-		ClaudeBin: envOr("NOMA_CLAUDE_BIN", "claude"),
+		Client:     c,
+		Dir:        os.Getenv("NOMA_WORKSPACE_DIR"),
+		ClaudeBin:  envOr("NOMA_CLAUDE_BIN", "claude"),
+		ProfileURL: envOr("NOMA_CLAUDE_PROFILE_URL", agent.DefaultProfileURL),
 	}).Run(ctx)
 }
 

@@ -1,6 +1,11 @@
 package server
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/MrDHat/noma/internal/api"
+)
 
 func TestNameFromRepo(t *testing.T) {
 	for in, want := range map[string]string{
@@ -12,6 +17,42 @@ func TestNameFromRepo(t *testing.T) {
 	} {
 		if got := nameFromRepo(in); got != want {
 			t.Errorf("nameFromRepo(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestValidImage(t *testing.T) {
+	for in, want := range map[string]bool{
+		"debian":                         true,
+		"noma-e2e-project:dev":           true,
+		"ghcr.io/mrdhat/noma-dev:v0.3.0": true,
+		"localhost:5000/team/img@sha256:" + strings.Repeat("a", 64): true,
+		"":                  false,
+		"Debian":            false,
+		"debian; rm -rf /":  false,
+		"https://ghcr.io/x": false,
+		"img@sha256:short":  false,
+	} {
+		if got := api.ValidImage(in); got != want {
+			t.Errorf("ValidImage(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestValidGitIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, email string
+		want        bool
+	}{
+		{"Ada Lovelace", "ada@example.com", true},
+		{"", "ada@example.com", false},
+		{"Ada", "", false},
+		{"Ada\n[core]", "ada@example.com", false},
+		{"Ada", "ada@example.com\r", false},
+		{strings.Repeat("a", 201), "ada@example.com", false},
+	} {
+		if got := validGitIdentity(&api.GitIdentity{Name: tc.name, Email: tc.email}); got != tc.want {
+			t.Errorf("validGitIdentity(%q, %q) = %v, want %v", tc.name, tc.email, got, tc.want)
 		}
 	}
 }
