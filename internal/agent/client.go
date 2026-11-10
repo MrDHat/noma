@@ -56,6 +56,13 @@ func (c *Client) Status(ctx context.Context, st api.AgentStatus) error {
 	return err
 }
 
+// Credentials fetches the credentials this workspace gets.
+func (c *Client) Credentials(ctx context.Context) (*api.CredentialList, error) {
+	var list api.CredentialList
+	_, err := c.do(ctx, http.MethodGet, "/agent/v1/credentials", nil, &list)
+	return &list, err
+}
+
 // CheckAccount checks the Claude account against the user's pinned one. It
 // returns errAccountChanged if the server says it differs.
 func (c *Client) CheckAccount(ctx context.Context, acct api.AgentAccount) error {

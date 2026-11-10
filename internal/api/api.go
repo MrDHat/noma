@@ -105,6 +105,20 @@ type SecretList struct {
 	Secrets []Secret `json:"secrets"`
 }
 
+// Credential is a secret delivered to a workspace, as GET
+// /agent/v1/credentials returns it to that workspace's agent.
+type Credential struct {
+	Name    string `json:"name"`
+	GitHost string `json:"gitHost,omitempty"`
+	Env     string `json:"env,omitempty"`
+	Value   string `json:"value"`
+}
+
+// CredentialList is the response to GET /agent/v1/credentials.
+type CredentialList struct {
+	Credentials []Credential `json:"credentials"`
+}
+
 // Error is the body of every non-2xx response.
 type Error struct {
 	Error string `json:"error"`
