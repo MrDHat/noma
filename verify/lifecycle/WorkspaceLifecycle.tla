@@ -215,8 +215,8 @@ RecUnlock(r) ==
 
 \* ensure: each server-side apply is one API call. A failed one ends the
 \* pass, after setPhase(error) if the snapshot's phase is the reconciler's.
-\* Namespace, NetworkPolicy and the shared Claude login claim are per owner
-\* and never deleted, so the model leaves them out.
+\* Namespace, NetworkPolicy, the agent CA ConfigMap and the shared Claude
+\* login claim are per owner and never deleted, so the model leaves them out.
 RecApply(r, from, to, effect) ==
     /\ rpc[r] = from
     /\ \/ /\ effect

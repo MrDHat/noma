@@ -64,6 +64,11 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("NOMA_WORKSPACE_MEMORY: %w", err)
 	}
+	tlsDir := envOr("NOMA_TLS_DIR", "/etc/noma/tls")
+	agentCA, err := os.ReadFile(tlsDir + "/ca.crt")
+	if err != nil {
+		return fmt.Errorf("agent CA: %w", err)
+	}
 	// With the fake Claude (CI), noma-server stands in for Claude's profile
 	// endpoint so the account check has something to ask.
 	fakeClaude := os.Getenv("NOMA_FAKE_CLAUDE") == "1"
@@ -73,6 +78,7 @@ func run() error {
 		profileURL = agentURL + "/fake/claude/profile"
 	}
 	rec := reconcile.New(st, kube, reconcile.Config{
+		AgentCA:          string(agentCA),
 		Image:            envOr("NOMA_WORKSPACE_IMAGE", "noma-workspace:dev"),
 		ServerURL:        agentURL,
 		Memory:           memory,
@@ -93,8 +99,6 @@ func run() error {
 		Handler:           agents.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	tlsDir := envOr("NOMA_TLS_DIR", "/etc/noma/tls")
-
 	errc := make(chan error, 2)
 	go func() { errc <- cliAPI.ListenAndServe() }()
 	go func() { errc <- agentAPI.ListenAndServeTLS(tlsDir+"/tls.crt", tlsDir+"/tls.key") }()
