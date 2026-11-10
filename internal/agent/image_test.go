@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -32,3 +33,13 @@ func TestReadNomaYAML(t *testing.T) {
 }
 
 const sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+func TestRepoNomaYAML(t *testing.T) {
+	image, err := readNomaYAML("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(image, "ghcr.io/mrdhat/noma-dev:") {
+		t.Errorf("the repo's noma.yaml names %q, want the noma-dev image", image)
+	}
+}

@@ -109,6 +109,7 @@ printf '%s\n' "$token" | "$noma" secret set demo-gh --git-host github.com --env 
 pod_n="$(pod_of demo-noma)"
 image="$(kc -n noma-u-dev get pod "$pod_n" -o jsonpath='{.spec.containers[0].image}')"
 echo "demo-noma runs ${image}"
+[[ "$image" == ghcr.io/mrdhat/noma-dev* ]] || fail "demo-noma is not on the image its noma.yaml names"
 branch="noma-demo-$(date +%s)"
 kc -n noma-u-dev exec "$pod_n" -- sh -c "cd /workspaces/*/demo-noma &&
   git switch -c ${branch} && git commit --allow-empty -qm 'Noma M3 demo' && git push -q origin ${branch}"
