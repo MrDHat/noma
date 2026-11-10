@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -67,6 +68,9 @@ func authStatus() {
 	}
 }
 
+// fakeAccount is the account every fake sign-in belongs to.
+const fakeAccount = "fake-account"
+
 func authLogin() {
 	url := "https://claude.com/cai/oauth/authorize?code=true&client_id=fake&response_type=code" +
 		"&code_challenge=fake&code_challenge_method=S256&state=" + randomHex(8)
@@ -77,7 +81,11 @@ func authLogin() {
 		os.Exit(1)
 	}
 	if err := os.MkdirAll(filepath.Dir(credentialsPath()), 0o700); err == nil {
-		err = os.WriteFile(credentialsPath(), []byte(`{"fake":true}`), 0o600)
+		// Shaped like Claude's: the token names the account, for noma-server's
+		// fake profile endpoint.
+		creds := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"fake-token-%s","expiresAt":%d}}`,
+			fakeAccount, time.Now().Add(8*time.Hour).UnixMilli())
+		err = os.WriteFile(credentialsPath(), []byte(creds), 0o600)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

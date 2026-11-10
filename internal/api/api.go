@@ -107,6 +107,13 @@ type AgentStatus struct {
 	ClaudeLastExit string `json:"claudeLastExit,omitempty"`
 }
 
+// AgentAccount is the body of POST /agent/v1/account: the Claude account
+// the workspace's login belongs to. The server answers 409 if it is not the
+// account pinned for the user.
+type AgentAccount struct {
+	Account string `json:"account"`
+}
+
 // AgentMessage is one message from the server to the agent, returned by the
 // long-poll GET /agent/v1/messages.
 type AgentMessage struct {

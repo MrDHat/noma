@@ -63,10 +63,13 @@ type User struct {
 
 	Name string `bun:",pk"`
 	// GitName and GitEmail are the identity of the user's commits.
-	GitName   string    `bun:",notnull"`
-	GitEmail  string    `bun:",notnull"`
-	CreatedAt time.Time `bun:",notnull,default:current_timestamp"`
-	UpdatedAt time.Time `bun:",notnull,default:current_timestamp"`
+	GitName  string `bun:",notnull"`
+	GitEmail string `bun:",notnull"`
+	// ClaudeAccount is the Claude account the user's shared login must
+	// belong to, pinned the first time a workspace checks it (M3-26).
+	ClaudeAccount string    `bun:",notnull"`
+	CreatedAt     time.Time `bun:",notnull,default:current_timestamp"`
+	UpdatedAt     time.Time `bun:",notnull,default:current_timestamp"`
 }
 
 // SetGitIdentity records the user's git identity, creating the user's row
@@ -79,6 +82,25 @@ func (s *Store) SetGitIdentity(ctx context.Context, user, name, email string) er
 		Set("updated_at = now()").
 		Exec(ctx)
 	return err
+}
+
+// PinClaudeAccount pins account as the user's Claude account if none is
+// pinned yet, and says whether account is the pinned one.
+func (s *Store) PinClaudeAccount(ctx context.Context, user, account string) (bool, error) {
+	_, err := s.db.NewInsert().Model(&User{Name: user, ClaudeAccount: account}).
+		On("CONFLICT (name) DO UPDATE").
+		Set("claude_account = EXCLUDED.claude_account").
+		Set("updated_at = now()").
+		Where("?TableAlias.claude_account = ''").
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	u, err := s.UserByName(ctx, user)
+	if err != nil {
+		return false, err
+	}
+	return u.ClaudeAccount == account, nil
 }
 
 // UserByName returns the user's row, or ErrNotFound.
