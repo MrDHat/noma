@@ -135,6 +135,10 @@ func (r *Reconciler) ensure(ctx context.Context, ws *store.Workspace) error {
 			return err
 		},
 		func() error {
+			_, err := r.Kube.CoreV1().PersistentVolumeClaims(ns).Apply(ctx, loginClaim(ws.Owner), applyOpts)
+			return err
+		},
+		func() error {
 			_, err := r.Kube.CoreV1().ServiceAccounts(ns).Apply(ctx, serviceAccount(ws), applyOpts)
 			return err
 		},
