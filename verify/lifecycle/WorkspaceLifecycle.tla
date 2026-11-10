@@ -6,7 +6,7 @@
 \*
 \* Each action is one indivisible step in the code: one SQL statement, one
 \* Kubernetes API call, or one controller reaction. Comments name the code.
-\* hack/verify-lifecycle.sh runs every check; .claude/skills/
+\* hack/verify-model.sh lifecycle runs every check; .claude/skills/
 \* verify-workspace-lifecycle/SKILL.md says how to read and update it.
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -453,7 +453,7 @@ Spec == Init /\ [][Next]_vars
 FairSpec == Spec /\ Fairness
 
 -----------------------------------------------------------------------------
-\* Properties. hack/verify-lifecycle.sh lists which check holds each one.
+\* Properties. verify/lifecycle/checks lists which check holds each one.
 
 \* A workspace the user deleted shows "deleting" until its row is gone.
 DeleteIsFinal ==
