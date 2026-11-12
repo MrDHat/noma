@@ -1,0 +1,29 @@
+# Noma installs into one namespace per cluster (noma-system): its names are
+# fixed, and workspaces reach noma-server at noma-server.noma-system.svc.
+# The cluster must already have the gvisor RuntimeClass and NetworkPolicy
+# enforcement (M3.5-15).
+
+server:
+  image: noma-server:dev
+  pullPolicy: IfNotPresent
+
+workspace:
+  # The image every workspace starts on (it clones the repo).
+  image: noma-workspace:dev
+  memory: 2Gi
+  # Use the fake claude binary baked into the workspace image (tests only).
+  fakeClaude: false
+
+postgres:
+  # postgres:17-alpine, multi-arch index.
+  image: postgres:17-alpine@sha256:e5d2edd28b1f8d40a0a6c0c9cdc545b19b56a0d5d88f94bc11a97d970d4700d0
+  storage: 1Gi
+  # Empty means the cluster's default StorageClass.
+  storageClassName: ""
+
+# The chart creates Noma's secrets once and keeps them across upgrades and
+# uninstall (M3.5-16): postgres, noma-server, noma-secret-key and
+# noma-server-tls in the release namespace. Set create to false when they
+# exist already, for example when rendering without a cluster.
+secrets:
+  create: true

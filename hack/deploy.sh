@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds Noma's images inside the dev cluster and rolls out noma-server, and
-# builds bin/noma for this machine. make dev-up runs this; run it again
+# Builds Noma's images inside the dev cluster and installs the Noma chart,
+# and builds bin/noma for this machine. make dev-up runs this; run it again
 # (make deploy) after changing the code.
 # NOMA_CLAUDE=fake swaps the pinned Claude Code in the workspace image for
 # the fake one the e2e tests use. NOMA_RELEASE=vX.Y.Z deploys that release's
@@ -10,7 +10,6 @@ set -euo pipefail
 PROFILE="${NOMA_PROFILE:-noma}"
 CLAUDE="${NOMA_CLAUDE:-real}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CERTS="${ROOT}/.dev/certs"
 kc() { kubectl --context "$PROFILE" "$@"; }
 
 arch="$(minikube -p "$PROFILE" ssh -- uname -m | tr -d '\r')"
@@ -19,15 +18,6 @@ case "$arch" in
   x86_64) goarch=amd64 ;;
   *) echo "unsupported node architecture: $arch" >&2; exit 1 ;;
 esac
-
-# The agent endpoint's TLS certificate, from a CA only workspaces trust.
-if [ ! -f "${CERTS}/ca.crt" ]; then
-  go run "${ROOT}/hack/devcerts" "$CERTS"
-fi
-# The server hands the CA to workspaces (a ConfigMap per user namespace).
-kc -n noma-system create secret generic noma-server-tls --type=kubernetes.io/tls \
-  --from-file=tls.crt="${CERTS}/tls.crt" --from-file=tls.key="${CERTS}/tls.key" \
-  --from-file=ca.crt="${CERTS}/ca.crt" --dry-run=client -o yaml | kc apply -f -
 
 if [ -n "${NOMA_RELEASE:-}" ]; then
   # The release's images, by digest.
@@ -76,17 +66,40 @@ else
   fi
 fi
 
-kc apply -f "${ROOT}/deploy/dev/rbac.yaml" -f "${ROOT}/deploy/dev/server.yaml"
 # Real Claude needs room for the Remote Control server and its sessions; the
 # fake one needs almost nothing, so tests can run several workspaces.
-if [ "$CLAUDE" = real ]; then memory=2Gi; else memory=256Mi; fi
-if [ "$CLAUDE" = real ]; then fake=0; else fake=1; fi
-kc -n noma-system set env deployment/noma-server NOMA_WORKSPACE_MEMORY="$memory" NOMA_FAKE_CLAUDE="$fake" >/dev/null
-if [ -n "${NOMA_RELEASE:-}" ]; then
-  kc -n noma-system patch deployment/noma-server --type=json -p "[
-    {\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/image\",\"value\":\"${server_image}\"},
-    {\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/imagePullPolicy\",\"value\":\"IfNotPresent\"}]" >/dev/null
-  kc -n noma-system set env deployment/noma-server NOMA_WORKSPACE_IMAGE="$workspace_image" >/dev/null
+values=(-f "${ROOT}/charts/noma/values-minikube.yaml")
+if [ "$CLAUDE" = real ]; then
+  values+=(--set workspace.memory=2Gi --set workspace.fakeClaude=false)
+else
+  values+=(--set workspace.memory=256Mi --set workspace.fakeClaude=true)
 fi
-kc -n noma-system rollout restart deployment/noma-server
-kc -n noma-system rollout status deployment/noma-server --timeout=120s
+if [ -n "${NOMA_RELEASE:-}" ]; then
+  values+=(--set "server.image=${server_image}" --set server.pullPolicy=IfNotPresent
+    --set "workspace.image=${workspace_image}")
+fi
+
+# Clusters made before the chart (M3.5-14) have the same objects, applied
+# with kubectl. Mark them as the release's so Helm takes them over, keeping
+# Postgres's data and the secrets.
+if ! helm --kube-context "$PROFILE" -n noma-system status noma >/dev/null 2>&1; then
+  for obj in secret/postgres secret/noma-server secret/noma-secret-key secret/noma-server-tls \
+    service/postgres statefulset/postgres serviceaccount/noma-server service/noma-server \
+    deployment/noma-server clusterrole/noma-server clusterrolebinding/noma-server; do
+    if kc -n noma-system get "$obj" >/dev/null 2>&1; then
+      kc -n noma-system label --overwrite "$obj" app.kubernetes.io/managed-by=Helm >/dev/null
+      kc -n noma-system annotate --overwrite "$obj" meta.helm.sh/release-name=noma \
+        meta.helm.sh/release-namespace=noma-system >/dev/null
+    fi
+  done
+fi
+
+# --force-conflicts: the chart owns these objects, including fields kubectl
+# set on clusters made before it.
+helm --kube-context "$PROFILE" upgrade --install noma "${ROOT}/charts/noma" \
+  -n noma-system --create-namespace "${values[@]}" --force-conflicts --wait --timeout 5m
+if [ -z "${NOMA_RELEASE:-}" ]; then
+  # The images keep their :dev tag, so a new build needs a restart.
+  kc -n noma-system rollout restart deployment/noma-server
+  kc -n noma-system rollout status deployment/noma-server --timeout=120s
+fi

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: noma
+description: Noma runs Claude Code workspaces in your Kubernetes cluster.
+type: application
+# Releases set both to the release's version (NOM-66).
+version: 0.0.0
+appVersion: dev
