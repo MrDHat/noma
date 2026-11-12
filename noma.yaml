@@ -1,3 +1,3 @@
 # The image workspaces on this repo run: Noma's development image (Go,
 # golangci-lint, gh), pinned by digest. Noma adds its agent and Claude at start.
-image: ghcr.io/mrdhat/noma-dev:v0.3.0@sha256:ca737b894371a47bbc987828cf782bc65f371893920e4e25f101966fdec5f961
+image: ghcr.io/mrdhat/noma-dev:v0.3.1@sha256:90a150719ba6f667b5a25d816283ef4e0fe6ca21b08b7164f4eb45d26c53a746
