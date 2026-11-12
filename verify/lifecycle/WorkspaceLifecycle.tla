@@ -14,7 +14,9 @@ CONSTANTS
     Reconcilers,   \* noma-server replicas running reconcile.Run at once
     KubeCanFail,   \* a Kubernetes apply or delete can return an error
     MaxCrashes,    \* how often the workspace container may crash
-    MaxStops       \* how often the user may stop the workspace
+    MaxStops,      \* how often the user may stop the workspace
+    SetupCanFail,  \* a noma.yaml setup command can fail (M3.5-12)
+    MaxListChanges \* how often the repo's setup list may change
 
 None == "none"
 \* An absent row, and a reconciler with no write to send. TLC cannot compare
@@ -23,7 +25,7 @@ NoRow == [exists |-> FALSE, desired |-> "none", phase |-> "none", msg |-> "", im
 NoWrite == [ph |-> "none", msg |-> ""]
 
 \* api.Phase* in internal/api/api.go
-AgentPhases == {"cloning", "starting-claude", "sign-in", "ready"}
+AgentPhases == {"cloning", "setup", "starting-claude", "sign-in", "ready"}
 Phases == {"pending", "starting", "error", "deleting", "stopping", "stopped"} \cup AgentPhases
 
 \* Workspace images (M3-17): every pod starts on the Noma base image, which
@@ -55,11 +57,19 @@ VARIABLES
     lock,      \* the reconciler holding the reconcile lock, or None
     changed,   \* for each reconciler, the row's updated_at has moved since its pass read it
     lost,      \* ghost: the volume's data is gone (its claim was finalized)
-    stops      \* ghost: how often the user has stopped the workspace
+    stops,     \* ghost: how often the user has stopped the workspace
+    setupDone, \* the volume records setup succeeded for the list's current hash
+    setupRun,  \* this agent's setup: "skipped", "pending", "running", "ok" or "failed",
+               \* or "stale": skipped though the list changed (a bug, never expected)
+    listRan,   \* ghost: setup succeeded for the list as it is now
+    listChanges \* ghost: how often the repo's setup list has changed
 
 vars == <<row, created, sa, sts, replicas, stsImage, podImage, pvc, pod, crashes,
           cloned, loggedIn, todo, inc, inflight, landed, rpc, snap, rwrite,
-          applyFailed, lock, changed, lost, stops>>
+          applyFailed, lock, changed, lost, stops, setupDone, setupRun, listRan, listChanges>>
+
+\* The setup variables, left unchanged by every action that is not about setup.
+SetupVars == <<setupDone, setupRun, listRan, listChanges>>
 
 RPCs == {"idle", "read", "unlock", "applySA", "applyPVC", "applySTS", "setError", "getPod",
          "setPhase", "delSTS", "delPVC", "delSA", "goneGetPod",
@@ -75,6 +85,8 @@ TypeOK ==
     /\ replicas \in {0, 1} /\ stsImage \in Images /\ podImage \in Images
     /\ rpc \in [Reconcilers -> RPCs]
     /\ lock \in Reconcilers \cup {None}
+    /\ setupDone \in BOOLEAN
+    /\ setupRun \in {"skipped", "stale", "pending", "running", "ok", "failed"}
 
 \* store.SetPhase: UPDATE ... SET updated_at = now() WHERE id = ? AND
 \* desired = 'running'. SetPhaseIfUnchanged takes the desired state from
@@ -93,11 +105,14 @@ SetPhaseIfUnchanged(r, ph, m) == SetPhaseWhere(ph, m, snap[r].desired, ~changed[
 \* What noma-agent reports after it starts (agent.Run, setup,
 \* superviseClaude, waitForLogin). The clone and login live on the volume, so
 \* a restarted pod skips them. On the base image, after the clone, the agent
-\* reports the image noma.yaml names and waits for the swap (M3-17).
+\* reports the image noma.yaml names and waits for the swap (M3-17). On the
+\* project image it runs noma.yaml's setup commands before Claude, unless
+\* the volume records they succeeded for the list as it is now (M3.5-12).
 StartReports ==
     (IF cloned THEN <<>> ELSE <<"cloning">>)
     \o (IF podImage # "project" THEN <<"image">>
-        ELSE <<"starting-claude">>
+        ELSE (IF setupDone THEN <<>> ELSE <<"setup">>)
+             \o <<"starting-claude">>
              \o (IF loggedIn THEN <<>> ELSE <<"sign-in">>)
              \o <<"ready">>)
 
@@ -115,6 +130,7 @@ Init ==
     /\ lock = None
     /\ changed = [r \in Reconcilers |-> FALSE]
     /\ lost = FALSE /\ stops = 0
+    /\ setupDone = FALSE /\ setupRun = "pending" /\ listRan = FALSE /\ listChanges = 0
 
 -----------------------------------------------------------------------------
 \* CLI API: internal/server/server.go
@@ -128,10 +144,12 @@ ApiCreate ==
     /\ UNCHANGED <<sa, sts, replicas, stsImage, podImage, pvc, pod, crashes, cloned,
                    loggedIn, todo, inc, inflight, landed, rpc, snap, rwrite,
                    applyFailed, lock, changed, lost, stops>>
+    /\ UNCHANGED SetupVars
 
 ApiUnchanged == UNCHANGED <<created, sa, sts, replicas, stsImage, podImage, pvc,
                             pod, crashes, cloned, loggedIn, todo, inc, inflight,
-                            landed, rpc, snap, rwrite, applyFailed, lock, lost>>
+                            landed, rpc, snap, rwrite, applyFailed, lock, lost,
+                            setupDone, setupRun, listRan, listChanges>>
 
 \* deleteWorkspace -> store.MarkDeleted: WHERE desired <> 'deleted'.
 ApiDelete ==
@@ -168,7 +186,8 @@ Go(r, pc) == rpc' = [rpc EXCEPT ![r] = pc]
 
 KubeVars == <<sa, sts, replicas, stsImage, pvc>>
 ApplyUnchanged == UNCHANGED <<created, podImage, pod, crashes, cloned, loggedIn,
-                              todo, inc, inflight, landed, lock, lost, stops>>
+                              todo, inc, inflight, landed, lock, lost, stops,
+                              setupDone, setupRun, listRan, listChanges>>
 RecUnchanged == ApplyUnchanged /\ UNCHANGED applyFailed
 
 \* pass -> store.WithReconcileLock: BEGIN, then pg_try_advisory_xact_lock.
@@ -181,6 +200,7 @@ RecLock(r) ==
     /\ UNCHANGED <<row, KubeVars, snap, rwrite, created, podImage, pod, crashes,
                    cloned, loggedIn, todo, inc, inflight, landed, applyFailed,
                    changed, lost, stops>>
+    /\ UNCHANGED SetupVars
 
 \* pass: store.Workspaces reads every row in one SELECT. With no row there is
 \* nothing to do. A stopped workspace goes through ensure too, with 0
@@ -196,6 +216,8 @@ RecStartPass(r) ==
 
 \* reconcilerPhase: a phase the reconciler set, not one the agent reported.
 ErrObjects == "could not create workspace objects"
+\* The agent's setup error; the real message names the command (M3.5-12).
+ErrSetup == "setup failed"
 ReconcilerPhase(s) ==
     \/ s.phase \in {"pending", "starting", "stopping", "stopped"}
     \/ s.phase = "error" /\ s.msg = ErrObjects
@@ -212,6 +234,7 @@ RecUnlock(r) ==
     /\ UNCHANGED <<row, KubeVars, snap, rwrite, created, podImage, pod, crashes,
                    cloned, loggedIn, todo, inc, inflight, landed, applyFailed,
                    changed, lost, stops>>
+    /\ UNCHANGED SetupVars
 
 \* ensure: each server-side apply is one API call. A failed one ends the
 \* pass, after setPhase(error) if the snapshot's phase is the reconciler's.
@@ -319,6 +342,11 @@ Reconcile(r) ==
 -----------------------------------------------------------------------------
 \* Kubernetes controllers and the kubelet.
 
+\* A new agent skips setup when the volume records it succeeded for the list
+\* as it is now; it reads noma.yaml once, at start.
+AgentStartsSetup ==
+    IF setupDone THEN (IF listRan THEN "skipped" ELSE "stale") ELSE "pending"
+
 KubeUnchanged == UNCHANGED <<row, created, replicas, stsImage, rpc, snap, rwrite,
                              applyFailed, lock, changed>>
 
@@ -329,6 +357,7 @@ PodCreate ==
     /\ pod' = "creating"
     /\ podImage' = stsImage
     /\ UNCHANGED <<sa, sts, pvc, crashes, cloned, loggedIn, todo, inc, inflight, landed, lost, stops>>
+    /\ UNCHANGED SetupVars
     /\ KubeUnchanged
 
 \* The StatefulSet controller deletes the pod when replicas go to 0, or to
@@ -341,6 +370,7 @@ PodRemove ==
     /\ todo' = <<>>
     /\ landed' = None
     /\ UNCHANGED <<sa, sts, podImage, pvc, crashes, cloned, loggedIn, inc, inflight, lost, stops>>
+    /\ UNCHANGED SetupVars
     /\ KubeUnchanged
 
 \* The kubelet starts the pod once its claim is bound, and noma-agent starts.
@@ -351,6 +381,8 @@ PodStart ==
     /\ inc' = inc + 1
     /\ landed' = None
     /\ UNCHANGED <<sa, sts, podImage, pvc, crashes, cloned, loggedIn, inflight, lost, stops>>
+    /\ setupRun' = AgentStartsSetup
+    /\ UNCHANGED <<setupDone, listRan, listChanges>>
     /\ KubeUnchanged
 
 \* The container exits and waits in CrashLoopBackOff; the agent is gone.
@@ -361,6 +393,7 @@ PodCrash ==
     /\ todo' = <<>>
     /\ landed' = None
     /\ UNCHANGED <<sa, sts, podImage, pvc, cloned, loggedIn, inc, inflight, lost, stops>>
+    /\ UNCHANGED SetupVars
     /\ KubeUnchanged
 
 PodRestart ==
@@ -370,6 +403,8 @@ PodRestart ==
     /\ inc' = inc + 1
     /\ landed' = None
     /\ UNCHANGED <<sa, sts, podImage, pvc, crashes, cloned, loggedIn, inflight, lost, stops>>
+    /\ setupRun' = AgentStartsSetup
+    /\ UNCHANGED <<setupDone, listRan, listChanges>>
     /\ KubeUnchanged
 
 \* The garbage collector deletes the pod of a deleted StatefulSet.
@@ -379,14 +414,16 @@ PodGC ==
     /\ todo' = <<>>
     /\ landed' = None
     /\ UNCHANGED <<sa, sts, podImage, pvc, crashes, cloned, loggedIn, inc, inflight, lost, stops>>
+    /\ UNCHANGED SetupVars
     /\ KubeUnchanged
 
 \* pvc-protection: a deleted claim goes once no pod uses it, with its data.
 PVCFinalize ==
     /\ pvc = "terminating" /\ pod = "none"
     /\ pvc' = "none"
-    /\ cloned' = FALSE /\ loggedIn' = FALSE
+    /\ cloned' = FALSE /\ loggedIn' = FALSE /\ setupDone' = FALSE /\ listRan' = FALSE
     /\ lost' = TRUE
+    /\ UNCHANGED <<setupRun, listChanges>>
     /\ UNCHANGED <<sa, sts, podImage, pod, crashes, todo, inc, inflight, landed, stops>>
     /\ KubeUnchanged
 
@@ -403,15 +440,38 @@ AgentSend ==
     /\ pod = "running" /\ todo # <<>>
     /\ ~\E m \in inflight : m.inc = inc
     /\ row.exists /\ row.desired = "running"
-    /\ inflight' = inflight \cup {[ph |-> Head(todo), inc |-> inc]}
+    /\ inflight' = inflight \cup {[ph |-> Head(todo), inc |-> inc,
+                                    setUp |-> setupRun \in {"skipped", "ok"}]}
     /\ todo' = Tail(todo)
     \* the clone finished before the image report or "starting-claude",
     \* the login before "ready"
     /\ loggedIn' = (loggedIn \/ Head(todo) = "ready")
-    /\ cloned' = (cloned \/ Head(todo) \in {"starting-claude", "image"})
+    /\ cloned' = (cloned \/ Head(todo) \in {"setup", "starting-claude", "image"})
+    \* "setup" goes out before the first command runs; "starting-claude"
+    \* after the last one succeeded, once the volume records the list's hash.
+    /\ setupRun' = CASE Head(todo) = "setup" -> "running"
+                    [] Head(todo) = "starting-claude" /\ setupRun = "running" -> "ok"
+                    [] OTHER -> setupRun
+    /\ setupDone' = (setupDone \/ (Head(todo) = "starting-claude" /\ setupRun = "running"))
+    /\ listRan' = (listRan \/ (Head(todo) = "starting-claude" /\ setupRun = "running"))
     /\ UNCHANGED <<row, created, sa, sts, replicas, stsImage, podImage, pvc, pod,
                    crashes, inc, landed, rpc, snap, rwrite, applyFailed, lock,
-                   changed, lost, stops>>
+                   changed, lost, stops, listChanges>>
+
+\* A setup command fails or times out. The agent reports the error with the
+\* command and its last lines, does not start Claude, and reports nothing
+\* more. The pod keeps running; noma start stops and starts the workspace,
+\* and the new agent runs setup again from the failed command.
+AgentSetupFails ==
+    /\ SetupCanFail
+    /\ pod = "running" /\ setupRun = "running"
+    /\ todo # <<>> /\ Head(todo) = "starting-claude"
+    /\ todo' = <<"error">>
+    /\ setupRun' = "failed"
+    /\ UNCHANGED <<row, created, sa, sts, replicas, stsImage, podImage, pvc, pod,
+                   crashes, cloned, loggedIn, inc, inflight, landed, rpc, snap,
+                   rwrite, applyFailed, lock, changed, lost, stops, setupDone,
+                   listRan, listChanges>>
 
 \* AgentServer.status: SetSignIn, SetLink and SetPhase, each guarded by
 \* desired = running. Only SetPhase moves the phase, so the model writes
@@ -424,13 +484,26 @@ AgentLand ==
            THEN /\ row' = IF row.exists /\ row.desired = "running"
                           THEN [row EXCEPT !.image = "project"] ELSE row
                 /\ UNCHANGED <<changed, landed>>
-           ELSE /\ SetPhase(m.ph, "")
+           ELSE /\ SetPhase(m.ph, IF m.ph = "error" THEN ErrSetup ELSE "")
                 /\ landed' = IF row.exists /\ row.desired = "running" /\ pod = "running"
                               THEN m.ph ELSE landed
         /\ inflight' = inflight \ {m}
         /\ UNCHANGED <<created, sa, sts, replicas, stsImage, podImage, pvc, pod,
                        crashes, cloned, loggedIn, todo, inc, rpc, snap, rwrite,
                        applyFailed, lock, lost, stops>>
+        /\ UNCHANGED SetupVars
+
+\* A commit changes noma.yaml's setup list, so its hash no longer matches
+\* the one the volume records. The running agent has read the list already;
+\* it records the hash of the list it ran, so a change while setup runs
+\* behaves like one after it.
+ListChanged ==
+    /\ row.exists /\ listChanges < MaxListChanges /\ setupRun # "running"
+    /\ listChanges' = listChanges + 1
+    /\ setupDone' = FALSE /\ listRan' = FALSE
+    /\ UNCHANGED <<row, created, sa, sts, replicas, stsImage, podImage, pvc, pod,
+                   crashes, cloned, loggedIn, todo, inc, inflight, landed, rpc,
+                   snap, rwrite, applyFailed, lock, changed, lost, stops, setupRun>>
 
 -----------------------------------------------------------------------------
 
@@ -438,7 +511,7 @@ Next ==
     \/ ApiCreate \/ ApiDelete \/ ApiStop \/ ApiStart
     \/ \E r \in Reconcilers : Reconcile(r)
     \/ PodCreate \/ PodRemove \/ PodStart \/ PodCrash \/ PodRestart \/ PodGC \/ PVCFinalize
-    \/ AgentSend \/ AgentLand
+    \/ AgentSend \/ AgentLand \/ AgentSetupFails \/ ListChanged
 
 \* Passes keep coming (the ticker), controllers keep working and the agent
 \* keeps reporting. Kubernetes failures are off in the liveness checks, so
@@ -481,14 +554,29 @@ AgentPhaseKept ==
     pod = "running" /\ landed # None /\ row.exists /\ row.desired = "running"
         => row.phase = landed
 
-\* A running workspace shows "error" only while Kubernetes is failing: once
-\* a later pass applies every object again, the error is gone by the end of
-\* that pass. The agent's own error reports are outside the model, so every
-\* error here is ensure's.
+\* A running workspace shows ensure's error only while Kubernetes is
+\* failing: once a later pass applies every object again, the error is gone
+\* by the end of that pass. The agent's setup error stays until a new agent
+\* runs setup again (AgentPhaseKept).
 ErrorClears ==
     /\ \A r \in Reconcilers : rpc[r] = "idle"
     /\ row.exists /\ row.desired = "running" /\ row.phase = "error"
+    /\ row.msg = ErrObjects
     => applyFailed
+
+\* M3.5's lifecycle promise: a workspace never shows ready before setup
+\* succeeded. Every "ready" an agent sends comes from an agent that ran
+\* noma.yaml's setup list as it read it, or found the volume had already.
+\* The row keeps a pod's last report after that pod's container restarts,
+\* until the new agent's first report; that holds for every phase.
+ReadyMeansSetUp ==
+    \A m \in inflight : m.ph = "ready" => m.setUp
+
+\* A workspace left running settles: ready, or showing the setup error.
+\* It is never stuck mid-setup.
+SettlesReadyOrError ==
+    <>[](row.exists /\ row.desired = "running")
+        => <>[](row.phase = "ready" \/ (row.phase = "error" /\ row.msg = ErrSetup))
 
 \* M3's strongest promise: stop never loses work.
 
