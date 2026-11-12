@@ -59,7 +59,7 @@ step "2. noma ls and noma attach"
 step "3. Stop and start keep the files and the link"
 pod_b="$(pod_of demo-b)"
 link_b="$(link_of demo-b)"
-kc -n noma-u-dev exec "$pod_b" -- sh -c 'touch /workspaces/*/demo-b/uncommitted-work'
+kc -n noma-u-dev exec "$pod_b" -- sh -c 'cd /workspaces/*/demo-b && touch uncommitted-work'
 "$noma" stop demo-b
 "$noma" start demo-b
 [ "$(link_of demo-b)" = "$link_b" ] || fail "demo-b's link changed after stop and start"
