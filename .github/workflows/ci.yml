@@ -68,6 +68,18 @@ jobs:
       - run: make verify-credentials
       - run: hack/model-sync.sh credentials check
 
+  # The same for the model of taking an install down (M3.5).
+  teardown-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The sync check names the last commit that confirmed the model.
+          fetch-depth: 0
+      - run: make verify-teardown
+      - run: hack/model-sync.sh teardown check
+
   e2e:
     runs-on: ubuntu-latest
     env:
