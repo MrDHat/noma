@@ -139,12 +139,22 @@ func (c *Claude) RemoteControl(ctx context.Context, onLink func(string)) error {
 	defer tty.Close() //nolint:errcheck
 
 	tail := &tailBuffer{max: 4 << 10}
-	go func() { _, _ = io.Copy(tailWriter{tail}, tty) }()
+	copied := make(chan struct{})
+	go func() {
+		defer close(copied)
+		_, _ = io.Copy(tailWriter{tail}, tty)
+	}()
 	stop := make(chan struct{})
 	defer close(stop)
 	go c.watchBridgePointer(stop, cmd.Process.Pid, onLink)
 
 	if err := cmd.Wait(); err != nil && ctx.Err() == nil {
+		// Claude's last words may still be in the terminal. The copy ends
+		// once they are read, unless a child of Claude holds it open.
+		select {
+		case <-copied:
+		case <-time.After(time.Second):
+		}
 		return fmt.Errorf("claude remote-control exited: %v: %s", err, tail.lastLine())
 	}
 	return nil
