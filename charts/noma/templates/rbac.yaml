@@ -1,10 +1,11 @@
-# What noma-server may do in the cluster. No exec, no Secrets, no RBAC.
-# M2 grants this cluster-wide because user namespaces are created on demand;
-# admission rules that confine it to noma-u-* namespaces come in M5.
+{{- /* What noma-server may do in the cluster. No exec, no Secrets, no RBAC.
+M2 grants this cluster-wide because user namespaces are created on demand;
+admission rules that confine it to noma-u-* namespaces come in M5. */}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: noma-server
+  labels: {{- include "noma.labels" . | nindent 4 }}
 rules:
   - apiGroups: [""]
     resources: [namespaces]
@@ -33,6 +34,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: noma-server
+  labels: {{- include "noma.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -40,4 +42,4 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: noma-server
-    namespace: noma-system
+    namespace: {{ .Release.Namespace }}

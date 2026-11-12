@@ -1,6 +1,6 @@
 ---
 name: verify-workspace-lifecycle
-description: Model-check Noma's workspace lifecycle (create, reconcile, agent status, stop, start, image swap, delete) with TLA+. Use when a change touches internal/reconcile/reconcile.go, internal/store/store.go's row writes, internal/server/server.go's create/delete/stop/start handlers, internal/server/agent.go's status handler, the agent's status reports in internal/agent/agent.go or signin.go, or how many noma-server replicas run (deploy/dev/server.yaml). Also use when CI's lifecycle sync check fails, or to check a fix for one of the known findings below.
+description: Model-check Noma's workspace lifecycle (create, reconcile, agent status, stop, start, image swap, delete) with TLA+. Use when a change touches internal/reconcile/reconcile.go, internal/store/store.go's row writes, internal/server/server.go's create/delete/stop/start handlers, internal/server/agent.go's status handler, the agent's status reports in internal/agent/agent.go or signin.go, or how many noma-server replicas run (charts/noma/templates/server.yaml). Also use when CI's lifecycle sync check fails, or to check a fix for one of the known findings below.
 ---
 
 # Verify the workspace lifecycle
@@ -67,7 +67,7 @@ Coverage, with the model operators that stand for each piece of code:
 | `internal/agent/agent.go`: `Run`, `setup`, `superviseClaude`, `report`; `signin.go`: `signIn`'s sign-in report | `StartReports`, `AgentSend` |
 | `internal/reconcile/objects.go`: the pod's ServiceAccount, PVC claim and `HOME` on the volume; the StatefulSet's replicas (`replicas`) and image (NOM-50) | `PodCreate`, `PodRemove`, `PodStart`, `PVCFinalize`, `cloned`/`loggedIn`, `RecApplySTS` |
 | `internal/agent/image.go` (`useImage`, called from `agent.go`'s `Run`): the `noma.yaml` image report (NOM-50) | `StartReports`' `"image"` |
-| `deploy/dev/server.yaml`: replica count and rollout strategy | `Reconcilers` in each config |
+| `charts/noma/templates/server.yaml`: replica count and rollout strategy | `Reconcilers` in each config |
 
 A change touches the verification when it does any of these:
 

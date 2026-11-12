@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Brings up the local Noma cluster: minikube (Docker driver, containerd),
-# Calico, gVisor and Postgres. The same script runs on laptops and in CI.
+# Calico and gVisor, then installs the Noma chart. The same script runs on laptops and in CI.
 # Safe to re-run.
 set -euo pipefail
 
@@ -46,29 +46,16 @@ if ! mk ssh -- test -x /usr/local/bin/runsc 2>/dev/null; then
     printf '\n[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc]\n  runtime_type = \"io.containerd.runsc.v1\"\n' | sudo tee -a /etc/containerd/config.toml >/dev/null &&
     sudo systemctl restart containerd"
 fi
-kc apply -f "${ROOT}/deploy/dev/runtimeclass.yaml"
+# The cluster side of the install (M3.5-15): the chart expects this.
+kc apply -f - <<'YAML'
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+YAML
 
-echo "==> Postgres"
-kc apply -f "${ROOT}/deploy/dev/namespace.yaml"
-if ! kc -n noma-system get secret postgres >/dev/null 2>&1; then
-  kc -n noma-system create secret generic postgres \
-    --from-literal=password="$(openssl rand -hex 24)"
-fi
-kc apply -f "${ROOT}/deploy/dev/postgres.yaml"
-kc -n noma-system rollout status statefulset/postgres --timeout=180s
-
-echo "==> noma-server"
-if ! kc -n noma-system get secret noma-server >/dev/null 2>&1; then
-  pg_password="$(kc -n noma-system get secret postgres -o jsonpath='{.data.password}' | base64 -d)"
-  kc -n noma-system create secret generic noma-server \
-    --from-literal=database-url="postgres://noma:${pg_password}@postgres.noma-system:5432/noma?sslmode=disable" \
-    --from-literal=admin-token="$(openssl rand -hex 32)"
-fi
-if ! kc -n noma-system get secret noma-secret-key >/dev/null 2>&1; then
-  kc -n noma-system create secret generic noma-secret-key \
-    --from-literal=id=k1 \
-    --from-literal=key="$(openssl rand -base64 32)"
-fi
+echo "==> Noma"
 "${ROOT}/hack/deploy.sh"
 
 echo "==> CLI config"
