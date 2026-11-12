@@ -47,13 +47,26 @@ func accessToken(home string) (string, bool, error) {
 	return creds.OAuth.AccessToken, fresh, nil
 }
 
+// profile is what Claude's profile endpoint says about a token.
+type profile struct {
+	Account struct {
+		UUID  string `json:"uuid"`
+		Email string `json:"email"`
+	} `json:"account"`
+	Organization struct {
+		UUID string `json:"uuid"`
+		Name string `json:"name"`
+	} `json:"organization"`
+}
+
 // claudeAccount asks the profile endpoint which account token belongs to.
 // A token the endpoint refuses counts as another account: an inference-only
 // token gets 403, and must not slip past the check.
-func (a *Agent) claudeAccount(ctx context.Context, token string) (string, error) {
+func (a *Agent) claudeAccount(ctx context.Context, token string) (profile, error) {
+	var p profile
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.ProfileURL, nil)
 	if err != nil {
-		return "", err
+		return p, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
@@ -63,24 +76,19 @@ func (a *Agent) claudeAccount(ctx context.Context, token string) (string, error)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return p, err
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return "", fmt.Errorf("%w: the profile endpoint refused the token (%d)", errAccountChanged, resp.StatusCode)
+		return p, fmt.Errorf("%w: the profile endpoint refused the token (%d)", errAccountChanged, resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:
-		return "", fmt.Errorf("profile endpoint: %s", resp.Status)
-	}
-	var p struct {
-		Account struct {
-			UUID string `json:"uuid"`
-		} `json:"account"`
+		return p, fmt.Errorf("profile endpoint: %s", resp.Status)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil || p.Account.UUID == "" {
-		return "", errors.New("profile endpoint returned no account")
+		return p, errors.New("profile endpoint returned no account")
 	}
-	return p.Account.UUID, nil
+	return p, nil
 }
 
 // checkAccount checks the login's account against the user's pinned one.
@@ -98,7 +106,7 @@ func (a *Agent) checkAccount(ctx context.Context, c *Claude) error {
 		slog.Info("claude's token has expired; checking its account once claude has refreshed it")
 		return nil
 	}
-	id, err := a.claudeAccount(ctx, token)
+	p, err := a.claudeAccount(ctx, token)
 	if errors.Is(err, errAccountChanged) {
 		return err
 	}
@@ -107,7 +115,7 @@ func (a *Agent) checkAccount(ctx context.Context, c *Claude) error {
 		return nil
 	}
 	changed, err := retry(ctx, func() (bool, error) {
-		err := a.Client.CheckAccount(ctx, api.AgentAccount{Account: id})
+		err := a.Client.CheckAccount(ctx, api.AgentAccount{Account: p.Account.UUID})
 		if errors.Is(err, errAccountChanged) {
 			return true, nil
 		}
@@ -118,6 +126,11 @@ func (a *Agent) checkAccount(ctx context.Context, c *Claude) error {
 		return err // ctx is done
 	case changed:
 		return errAccountChanged
+	}
+	// Remote Control reads the organization from ~/.claude.json, which only
+	// the workspace that signed in has; give every workspace it.
+	if err := c.SetAccount(p); err != nil {
+		slog.Warn("record claude account", "err", err)
 	}
 	return nil
 }

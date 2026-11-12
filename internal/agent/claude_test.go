@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -31,5 +33,38 @@ func TestSessionLinkTakesOnlyThisRun(t *testing.T) {
 	}
 	if got := sessionLink(path, 57); got != "" {
 		t.Errorf("pointer from an earlier run gave %q, want none", got)
+	}
+}
+
+func TestSetAccount(t *testing.T) {
+	c := &Claude{Home: t.TempDir(), Dir: "/w"}
+	if err := c.Seed(); err != nil {
+		t.Fatal(err)
+	}
+	var p profile
+	p.Account.UUID, p.Account.Email = "acct-1", "a@example.com"
+	if err := c.SetAccount(p); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(c.Home, ".claude.json")); strings.Contains(string(b), "oauthAccount") {
+		t.Fatal("wrote an account without an organization")
+	}
+	p.Organization.UUID, p.Organization.Name = "org-1", "Org"
+	if err := c.SetAccount(p); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(c.Home, ".claude.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Onboarded bool              `json:"hasCompletedOnboarding"`
+		Account   map[string]string `json:"oauthAccount"`
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Onboarded || cfg.Account["accountUuid"] != "acct-1" || cfg.Account["organizationUuid"] != "org-1" {
+		t.Errorf("got %s", b)
 	}
 }

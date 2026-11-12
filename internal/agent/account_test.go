@@ -68,8 +68,8 @@ func TestClaudeAccount(t *testing.T) {
 	defer srv.Close()
 	a := &Agent{ProfileURL: srv.URL}
 
-	if id, err := a.claudeAccount(context.Background(), "good"); err != nil || id != "acct-1" {
-		t.Fatalf("good token: %q %v", id, err)
+	if p, err := a.claudeAccount(context.Background(), "good"); err != nil || p.Account.UUID != "acct-1" || p.Organization.UUID != "org-1" {
+		t.Fatalf("good token: %+v %v", p, err)
 	}
 	for _, tok := range []string{"inference-only", "revoked"} {
 		if _, err := a.claudeAccount(context.Background(), tok); !errors.Is(err, errAccountChanged) {
