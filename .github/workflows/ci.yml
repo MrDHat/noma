@@ -101,6 +101,39 @@ jobs:
       - run: helm lint --strict charts/noma -f charts/noma/values-minikube.yaml
       - run: helm template noma charts/noma -n noma-system >/dev/null
 
+  # The AWS Terraform: formatted, valid, and no HIGH or CRITICAL
+  # misconfiguration beyond the accepted ones in .trivyignore (M3.5-24).
+  # No AWS credentials here; EKS runs are manual acceptance.
+  infra:
+    runs-on: ubuntu-latest
+    env:
+      TERRAFORM_VERSION: 1.16.7
+      TERRAFORM_SHA256: 5454efcf7fc87f0c2113111b9a5c7182f0ca1c6f0f23a1e110a50770a8fe473b
+      TRIVY_VERSION: 0.76.1
+      TRIVY_SHA256: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install terraform and trivy
+        run: |
+          curl -fsSLo terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          echo "${TERRAFORM_SHA256}  terraform.zip" | sha256sum -c -
+          curl -fsSLo trivy.tgz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  trivy.tgz" | sha256sum -c -
+          unzip -q terraform.zip terraform
+          tar -xzf trivy.tgz trivy
+          sudo install terraform trivy /usr/local/bin/
+          rm -f terraform.zip trivy.tgz terraform trivy
+      - run: terraform fmt -check -recursive infra
+      - name: terraform validate
+        run: |
+          for dir in infra/aws/bootstrap infra/aws; do
+            terraform -chdir="$dir" init -backend=false -input=false
+            terraform -chdir="$dir" validate
+          done
+      - run: trivy config --skip-version-check --skip-dirs '**/.terraform' --severity HIGH,CRITICAL --exit-code 1 infra
+
   e2e:
     runs-on: ubuntu-latest
     env:

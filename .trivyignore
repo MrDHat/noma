@@ -1,0 +1,11 @@
+# Deliberate, each with the decision that accepts it. CI fails on any other
+# HIGH or CRITICAL finding.
+
+# M3.5-10: the EKS API endpoint is public and open to all addresses (the
+# CLI's address keeps changing); IAM still guards it. Locked down in M4.
+AWS-0040
+AWS-0041
+
+# M3.5-6: nodes sit in public subnets with no inbound rules and no NAT
+# gateway. Private subnets and NAT come with M4.
+AWS-0164

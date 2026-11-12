@@ -35,3 +35,8 @@ go.work.sum
 # Build output
 /bin/
 /.dev/
+
+# Terraform working dirs and local state; lock files are committed.
+.terraform/
+*.tfstate
+*.tfstate.*
