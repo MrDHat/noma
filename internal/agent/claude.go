@@ -47,6 +47,40 @@ func Link(sessionID string) string {
 	return "https://claude.ai/code/session_" + m[1]
 }
 
+// SetAccount records the login's account in ~/.claude.json as oauthAccount,
+// as claude auth login does. Remote Control takes the organization from it
+// and refuses to start without one, so a workspace that got the shared
+// login without signing in needs it. It leaves a matching entry alone.
+func (c *Claude) SetAccount(p profile) error {
+	if p.Organization.UUID == "" {
+		return nil
+	}
+	path := filepath.Join(c.Home, ".claude.json")
+	cfg := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(b, &cfg); err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	account, _ := cfg["oauthAccount"].(map[string]any)
+	if account != nil && account["accountUuid"] == p.Account.UUID && account["organizationUuid"] == p.Organization.UUID {
+		return nil
+	}
+	cfg["oauthAccount"] = map[string]any{
+		"accountUuid":      p.Account.UUID,
+		"emailAddress":     p.Account.Email,
+		"organizationUuid": p.Organization.UUID,
+		"organizationName": p.Organization.Name,
+	}
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o600)
+}
+
 // Seed pre-answers the prompts Claude shows on first start, so it can run
 // unattended: it trusts the checkout and has seen the Remote Control notice.
 func (c *Claude) Seed() error {
