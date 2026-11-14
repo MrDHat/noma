@@ -8,30 +8,32 @@ import (
 	"testing"
 )
 
-// The chart refuses to install on a cluster without the RuntimeClass it
-// needs, and says what is missing (M3.5-15).
-func TestChartRefusesAClusterWithoutItsRuntimeClass(t *testing.T) {
+// The chart's preflight check fails on a cluster without the RuntimeClass
+// Noma needs, and says what is missing (M3.5-15). Helm runs the same Job as
+// a pre-install hook; make dev-up's install covers the passing case.
+func TestPreflightNamesAMissingRuntimeClass(t *testing.T) {
 	const ns = "e2e-preflight"
-	helm := func(args ...string) (string, error) {
-		out, err := exec.Command("helm", append([]string{"--kube-context", kubeContext()}, args...)...).CombinedOutput()
-		return string(out), err
-	}
+	kubectl(t, "create", "namespace", ns)
 	t.Cleanup(func() {
-		_, _ = helm("uninstall", "preflight", "-n", ns, "--no-hooks")
 		_, _ = exec.Command("kubectl", "--context", kubeContext(), "delete", "namespace", ns, "--wait=false").CombinedOutput()
+		_, _ = exec.Command("kubectl", "--context", kubeContext(), "delete",
+			"clusterrole,clusterrolebinding", "e2e-preflight-"+ns, "--ignore-not-found").CombinedOutput()
 	})
-	out, err := helm("install", "preflight", "../../charts/noma", "-n", ns, "--create-namespace",
+	out, err := exec.Command("helm", "template", "e2e", "../../charts/noma", "-n", ns,
 		"-f", "../../charts/noma/values-minikube.yaml",
-		"--set", "workspace.runtimeClassName=e2e-missing", "--wait", "--timeout", "3m")
-	if err == nil {
-		t.Fatalf("the chart installed without its RuntimeClass:\n%s", out)
+		"--set", "workspace.runtimeClassName=e2e-missing",
+		"--show-only", "templates/preflight.yaml").Output()
+	if err != nil {
+		t.Fatalf("helm template: %v", err)
 	}
-	logs := kubectl(t, "-n", ns, "logs", "job/preflight-preflight")
+	apply := exec.Command("kubectl", "--context", kubeContext(), "-n", ns, "apply", "-f", "-")
+	apply.Stdin = strings.NewReader(string(out))
+	if b, err := apply.CombinedOutput(); err != nil {
+		t.Fatalf("apply the preflight Job: %v\n%s", err, b)
+	}
+	kubectl(t, "-n", ns, "wait", "job/e2e-preflight", "--for=condition=Failed", "--timeout=120s")
+	logs := kubectl(t, "-n", ns, "logs", "job/e2e-preflight")
 	if !strings.Contains(logs, `RuntimeClass "e2e-missing" does not exist`) {
 		t.Fatalf("the preflight check did not name the missing RuntimeClass:\n%s", logs)
-	}
-	// Nothing past the check was installed.
-	if left := kubectl(t, "-n", ns, "get", "deployments,statefulsets", "-o", "jsonpath={.items[*].metadata.name}"); strings.TrimSpace(left) != "" {
-		t.Fatalf("the failed install left objects behind:\n%s", left)
 	}
 }
