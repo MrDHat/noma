@@ -68,8 +68,22 @@ spec:
               value: https://noma-server.{{ .Release.Namespace }}.svc:8443
             - name: NOMA_WORKSPACE_IMAGE
               value: {{ .Values.workspace.image }}
-            - name: NOMA_WORKSPACE_MEMORY
-              value: {{ .Values.workspace.memory | quote }}
+            - name: NOMA_WORKSPACE_MEMORY_REQUEST
+              value: {{ .Values.workspace.resources.requests.memory | quote }}
+            - name: NOMA_WORKSPACE_MEMORY_LIMIT
+              value: {{ .Values.workspace.resources.limits.memory | quote }}
+            - name: NOMA_WORKSPACE_CPU_REQUEST
+              value: {{ .Values.workspace.resources.requests.cpu | quote }}
+            - name: NOMA_WORKSPACE_CPU_LIMIT
+              value: {{ .Values.workspace.resources.limits.cpu | quote }}
+            - name: NOMA_WORKSPACE_DISK
+              value: {{ .Values.workspace.disk | quote }}
+            - name: NOMA_WORKSPACE_STORAGE_CLASS
+              value: {{ .Values.workspace.storageClassName | quote }}
+            - name: NOMA_LOGIN_STORAGE_CLASS
+              value: {{ .Values.login.storageClassName | quote }}
+            - name: NOMA_LOGIN_ACCESS_MODE
+              value: {{ .Values.login.accessMode | quote }}
             - name: NOMA_FAKE_CLAUDE
               value: {{ ternary "1" "0" .Values.workspace.fakeClaude | quote }}
           ports:
