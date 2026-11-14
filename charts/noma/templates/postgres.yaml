@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: postgres
-  namespace: noma-system
+  labels: {{- include "noma.labels" . | nindent 4 }}
 spec:
   selector:
     app: postgres
@@ -13,7 +13,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: postgres
-  namespace: noma-system
+  labels: {{- include "noma.labels" . | nindent 4 }}
 spec:
   serviceName: postgres
   replicas: 1
@@ -28,7 +28,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: postgres
-          image: postgres:17-alpine
+          image: {{ .Values.postgres.image }}
           env:
             - name: POSTGRES_USER
               value: noma
@@ -55,6 +55,29 @@ spec:
         name: data
       spec:
         accessModes: ["ReadWriteOnce"]
+        {{- with .Values.postgres.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
         resources:
           requests:
-            storage: 1Gi
+            storage: {{ .Values.postgres.storage }}
+---
+# Only noma-server reaches Postgres (M3.5-21). Workspaces are also kept out
+# by their own egress policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+  labels: {{- include "noma.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: noma-server
+      ports:
+        - port: 5432
