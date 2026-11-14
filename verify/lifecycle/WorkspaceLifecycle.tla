@@ -21,7 +21,8 @@ CONSTANTS
 None == "none"
 \* An absent row, and a reconciler with no write to send. TLC cannot compare
 \* a record with a string, so these are records too.
-NoRow == [exists |-> FALSE, desired |-> "none", phase |-> "none", msg |-> "", image |-> "none"]
+NoRow == [exists |-> FALSE, desired |-> "none", phase |-> "none", msg |-> "", image |-> "none",
+          boot |-> 0]
 NoWrite == [ph |-> "none", msg |-> ""]
 
 \* api.Phase* in internal/api/api.go
@@ -47,7 +48,7 @@ VARIABLES
     cloned,    \* the repo is on the volume
     loggedIn,  \* Claude's login is on the volume ($HOME is on it)
     todo,      \* statuses the running agent has still to report
-    inc,       \* pod incarnation, so a report knows which agent sent it
+    inc,       \* the agent's boot: the counter each agent bumps on the volume at start
     inflight,  \* status reports the server has authenticated but not stored
     landed,    \* ghost: phase the agent last stored while this pod runs
     rpc,       \* each reconciler's place in reconcile.pass
@@ -76,7 +77,7 @@ RPCs == {"idle", "read", "unlock", "applySA", "applyPVC", "applySTS", "setError"
          "goneGetPVC", "deleteRow"}
 
 Row == [exists: {TRUE}, desired: {"running", "stopped", "deleted"}, phase: Phases,
-        msg: STRING, image: Images]
+        msg: STRING, image: Images, boot: Nat]
 
 TypeOK ==
     /\ row = NoRow \/ row \in Row
@@ -99,7 +100,6 @@ SetPhaseWhere(ph, m, desired, guard) ==
     THEN /\ row' = [row EXCEPT !.phase = ph, !.msg = m]
          /\ changed' = [r \in Reconcilers |-> TRUE]
     ELSE UNCHANGED <<row, changed>>
-SetPhase(ph, m) == SetPhaseWhere(ph, m, "running", TRUE)
 SetPhaseIfUnchanged(r, ph, m) == SetPhaseWhere(ph, m, snap[r].desired, ~changed[r])
 
 \* What noma-agent reports after it starts (agent.Run, setup,
@@ -140,7 +140,7 @@ ApiCreate ==
     /\ ~created
     /\ created' = TRUE
     /\ row' = [exists |-> TRUE, desired |-> "running", phase |-> "pending", msg |-> "",
-               image |-> "base"]
+               image |-> "base", boot |-> 0]
     /\ UNCHANGED <<sa, sts, replicas, stsImage, podImage, pvc, pod, crashes, cloned,
                    loggedIn, todo, inc, inflight, landed, rpc, snap, rwrite,
                    applyFailed, lock, changed, lost, stops>>
@@ -473,20 +473,23 @@ AgentSetupFails ==
                    rwrite, applyFailed, lock, changed, lost, stops, setupDone,
                    listRan, listChanges>>
 
-\* AgentServer.status: SetSignIn, SetLink and SetPhase, each guarded by
-\* desired = running. Only SetPhase moves the phase, so the model writes
-\* just that one. The image report is store.SetImage, also guarded by
-\* desired = running; it records the image without touching the phase or
-\* updated_at, and wakes the reconciler.
+\* AgentServer.status -> store.SetStatus: one UPDATE writes the report's
+\* phase, sign-in, link and Claude health WHERE id = ? AND desired =
+\* 'running' AND boot <= ?, and sets boot to the report's. A report from an
+\* agent older than one already heard from changes nothing (NOM-70). The
+\* image report is store.SetImage with the same guard; it records the image
+\* without touching the phase or updated_at, and wakes the reconciler.
 AgentLand ==
     \E m \in inflight :
-        /\ IF m.ph = "image"
-           THEN /\ row' = IF row.exists /\ row.desired = "running"
-                          THEN [row EXCEPT !.image = "project"] ELSE row
-                /\ UNCHANGED <<changed, landed>>
-           ELSE /\ SetPhase(m.ph, IF m.ph = "error" THEN ErrSetup ELSE "")
-                /\ landed' = IF row.exists /\ row.desired = "running" /\ pod = "running"
-                              THEN m.ph ELSE landed
+        /\ IF row.exists /\ row.desired = "running" /\ row.boot <= m.inc
+           THEN IF m.ph = "image"
+                THEN /\ row' = [row EXCEPT !.image = "project", !.boot = m.inc]
+                     /\ UNCHANGED <<changed, landed>>
+                ELSE /\ row' = [row EXCEPT !.phase = m.ph, !.boot = m.inc,
+                                           !.msg = IF m.ph = "error" THEN ErrSetup ELSE ""]
+                     /\ changed' = [r \in Reconcilers |-> TRUE]
+                     /\ landed' = IF pod = "running" THEN m.ph ELSE landed
+           ELSE UNCHANGED <<row, changed, landed>>
         /\ inflight' = inflight \ {m}
         /\ UNCHANGED <<created, sa, sts, replicas, stsImage, podImage, pvc, pod,
                        crashes, cloned, loggedIn, todo, inc, rpc, snap, rwrite,

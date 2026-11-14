@@ -8,4 +8,4 @@ stop-liveness|stop-liveness.cfg|pass
 start-liveness|start-liveness.cfg|pass
 setup|setup.cfg|pass
 setup-liveness|setup-liveness.cfg|pass
-report-order|report-order.cfg|fail SettlesReadyOrError
+report-order|report-order.cfg|pass
