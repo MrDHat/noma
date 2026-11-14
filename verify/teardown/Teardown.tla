@@ -163,7 +163,7 @@ CloseCommit == Serving /\ hook = "commit"
   /\ UNCHANGED <<rows, create, shared, snap, ns, objs, vols, server, td>>
 
 ----
-\* make aws-down, after the hook passes.
+\* make aws-down (hack/aws-down.sh), after the hook passes.
 
 \* helm deletes the release: noma-server's pods start terminating.
 Uninstall == td = "up" /\ hook = "closed"
@@ -186,14 +186,15 @@ UninstallDone == td = "uninstalling"
   /\ td' = "uninstalled"
   /\ UNCHANGED <<rows, closing, create, shared, excl, hook, snap, ns, objs, vols, server>>
 
-\* aws-down deletes the user namespaces, which takes every claim and pod.
+\* aws-down deletes the user namespaces and noma-system, which takes every
+\* claim and pod.
 Sweep == td = "uninstalled"
   /\ ns' = FALSE
   /\ objs' = {}
   /\ td' = "sweeping"
   /\ UNCHANGED <<rows, closing, create, shared, excl, hook, snap, vols, server>>
 
-\* It waits until the namespaces and every volume are gone.
+\* It waits until the namespaces and every PersistentVolume are gone.
 SweepDone == td = "sweeping" /\ ~ns /\ objs = {} /\ vols = {}
   /\ td' = "swept"
   /\ UNCHANGED <<rows, closing, create, shared, excl, hook, snap, ns, objs, vols, server>>

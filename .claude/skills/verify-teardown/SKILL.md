@@ -7,7 +7,7 @@ description: Model-check that taking a Noma install down leaves nothing orphaned
 
 `make aws-down` runs `helm uninstall`. The chart's pre-delete hook asks noma-server to close: in one transaction it refuses while any workspace row exists, and otherwise marks the install closing, so every later create is refused. aws-down then deletes the user namespaces, waits for their volumes to go, and destroys the cluster. `noma up`, `noma rm`, the reconciler, the hook, the CSI driver and aws-down all act at once. `verify/teardown/Teardown.tla` models one user with two workspaces, Postgres at READ COMMITTED, and TLC checks every order of their steps.
 
-The model came first: it describes the design that NOM-60 (closing state) and NOM-67 (aws-down) build. The close and the locked create are in the code (NOM-60); until NOM-67 lands, the teardown steps after `helm uninstall` describe the design rather than the code.
+The model came first: it describes the design that NOM-60 (closing state) and NOM-67 (aws-down) build. Both are in the code now: the close and the locked create (NOM-60) and `hack/aws-down.sh` (NOM-67).
 
 ## What it promises
 
@@ -55,7 +55,7 @@ A new finding is a bug in the code, not in the model. List it here with its path
 | `internal/reconcile/reconcile.go`: `ensure` | `Ensure` |
 | `internal/reconcile/reconcile.go`: `remove`, `gone`; `internal/store/store.go`: `DeleteWorkspace` | `Remove` |
 | `internal/server/server.go`: `closeInstall`; `internal/store/store.go`: `CloseInstall` | `CloseBegin`, `CloseCount`, `CloseCommit` |
-| The chart's pre-delete hook (`charts/noma/templates/uninstall-guard.yaml`), `make aws-down` (NOM-67) | `Uninstall`, `ServerGone`, `UninstallDone`, `Sweep`, `SweepDone`, `SweepTimeout`, `Destroy` |
+| The chart's pre-delete hook (`charts/noma/templates/uninstall-guard.yaml`), `hack/aws-down.sh` | `Uninstall`, `ServerGone`, `UninstallDone`, `Sweep`, `SweepDone`, `SweepTimeout`, `Destroy` |
 
 A change touches the verification when it:
 
@@ -66,7 +66,7 @@ A change touches the verification when it:
 
 ## Keeping it in step (CI enforces this)
 
-`verify/teardown/covered.sha256` holds the SHA-256 of every covered file, as of the last time someone confirmed the model matches them. CI's `teardown-model` job runs `make verify-teardown` and `hack/model-sync.sh teardown check`, which fails when a covered file changed since. Read the diff it names, update the model if needed, run `make verify-teardown`, and only then run `hack/model-sync.sh teardown update` and commit `covered.sha256`. NOM-67 adds its files to it.
+`verify/teardown/covered.sha256` holds the SHA-256 of every covered file, as of the last time someone confirmed the model matches them. CI's `teardown-model` job runs `make verify-teardown` and `hack/model-sync.sh teardown check`, which fails when a covered file changed since. Read the diff it names, update the model if needed, run `make verify-teardown`, and only then run `hack/model-sync.sh teardown update` and commit `covered.sha256`.
 
 These files are covered by the lifecycle model as well; a change there may need both skills.
 
@@ -83,6 +83,6 @@ Not covered:
 - several users: each has their own namespace, and the sweep deletes them all;
 - stop and start: a stopped workspace keeps its row and volume, so the close refuses it like any other;
 - several noma-server replicas: the reconcile lock keeps passes apart, and each create and the close are their own transactions, so more replicas add no new order;
-- Postgres itself, and the release's other objects: helm deletes them;
+- Postgres and the release's other objects: helm deletes them, and aws-down deletes noma-system, and so Postgres's claim, with the user namespaces, and waits for every PersistentVolume;
 - the volume's EBS disk outliving its PersistentVolume: aws-down's final check for EBS volumes tagged with the cluster catches it;
 - how long anything takes: `SweepTimeout` stops aws-down with the cluster kept.
