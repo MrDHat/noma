@@ -71,7 +71,8 @@ Serving == server # "gone"
 \* noma up: server.go createWorkspace -> insertWorkspace -> store.CreateWorkspace.
 
 \* The create's transaction begins. With Locked it takes the install row
-\* FOR SHARE, and waits while the close holds it FOR UPDATE.
+\* FOR SHARE (SELECT closing FROM install ... FOR SHARE), and waits while the
+\* close holds it.
 CreateBegin(w) == Serving /\ create[w] = "idle"
   /\ (IF Locked THEN ~excl /\ shared' = shared \cup {w} ELSE UNCHANGED shared)
   /\ create' = [create EXCEPT ![w] = "read"]
@@ -135,10 +136,12 @@ CsiDelete(v) == td # "destroyed" /\ v \in vols
   /\ UNCHANGED <<rows, closing, create, shared, excl, hook, snap, ns, objs, server, td>>
 
 ----
-\* The chart's pre-delete hook calls noma-server's close endpoint.
+\* The chart's pre-delete hook (templates/uninstall-guard.yaml) calls
+\* noma-server's close endpoint: server.go closeInstall -> store.CloseInstall.
 
 \* The close's transaction begins. With Locked it updates the install row
-\* first, which waits for every create holding it FOR SHARE.
+\* first (UPDATE install SET closing = closing), which waits for every create
+\* holding it FOR SHARE.
 CloseBegin == Serving /\ td = "up" /\ hook = "idle"
   /\ (IF Locked THEN ~excl /\ shared = {} /\ excl' = TRUE ELSE UNCHANGED excl)
   /\ hook' = "count"
