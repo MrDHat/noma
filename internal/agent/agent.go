@@ -102,6 +102,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.report(ctx, api.AgentStatus{Phase: api.PhaseError, Message: err.Error()})
 			return
 		}
+		a.copyClaudeSetup(ctx)
 		a.superviseClaude(ctx, &Claude{
 			Bin:  a.ClaudeBin,
 			Home: os.Getenv("HOME"),
@@ -342,4 +343,17 @@ func sleep(ctx context.Context, d time.Duration) {
 func lastLine(b []byte) string {
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	return lines[len(lines)-1]
+}
+
+// copyClaudeSetup puts the user's laptop Claude setup into $HOME/.claude
+// before Claude starts (M3.5-5). Without one, or if it can't be used, Claude
+// starts with what the workspace has.
+func (a *Agent) copyClaudeSetup(ctx context.Context) {
+	archive, err := retry(ctx, func() ([]byte, error) { return a.Client.ClaudeSetup(ctx) })
+	if err != nil || archive == nil {
+		return
+	}
+	if err := installClaudeSetup(os.Getenv("HOME"), archive); err != nil {
+		slog.Warn("could not copy the Claude setup", "err", err)
+	}
 }

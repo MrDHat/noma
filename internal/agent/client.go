@@ -63,6 +63,20 @@ func (c *Client) Credentials(ctx context.Context) (*api.CredentialList, error) {
 	return &list, err
 }
 
+// ClaudeSetup returns the user's Claude setup archive, or nil if they
+// have never sent one.
+func (c *Client) ClaudeSetup(ctx context.Context) ([]byte, error) {
+	var cs api.ClaudeSetup
+	status, err := c.do(ctx, http.MethodGet, "/agent/v1/claude-setup", nil, &cs)
+	if err != nil || status == http.StatusNoContent {
+		return nil, err
+	}
+	if cs.Archive == nil {
+		cs.Archive = []byte{}
+	}
+	return cs.Archive, nil
+}
+
 // CheckAccount checks the Claude account against the user's pinned one. It
 // returns errAccountChanged if the server says it differs.
 func (c *Client) CheckAccount(ctx context.Context, acct api.AgentAccount) error {
