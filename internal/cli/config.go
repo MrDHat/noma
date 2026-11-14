@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-// Config is ~/.config/noma/config.json, written by make dev-up.
+// Config is ~/.config/noma/config.json, written by noma connect.
 type Config struct {
 	// Server is the base URL of noma-server, used when PortForward is unset.
 	Server string `json:"server,omitempty"`
@@ -45,7 +45,7 @@ func LoadConfig() (*Config, error) {
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
-		return nil, fmt.Errorf("read %s (run make dev-up first): %w", p, err)
+		return nil, fmt.Errorf("read %s (run noma connect first): %w", p, err)
 	}
 	var c Config
 	if err := json.Unmarshal(b, &c); err != nil {
