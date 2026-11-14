@@ -73,7 +73,7 @@ cat <<EOF2
 The cluster is up (kubectl context ${CONTEXT}). Install Noma and point the CLI at it:
 
   helm upgrade --install noma charts/noma -n noma-system --create-namespace \\
-    --set workspace.storageClassName=noma-workspace \\
+    --set workspace.storageClassName=noma-workspace --set postgres.storageClassName=noma-workspace \\
     --set login.storageClassName=noma-login --set login.accessMode=ReadWriteMany \\
     --set server.image=IMAGE --set workspace.image=IMAGE
   noma connect --context ${CONTEXT}
