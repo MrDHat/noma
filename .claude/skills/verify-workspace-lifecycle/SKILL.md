@@ -73,7 +73,7 @@ Coverage, with the model operators that stand for each piece of code:
 | `internal/agent/boot.go`: `countBoot`, saved on the volume before the first report (NOM-70) | `inc` (`PodStart`, `PodRestart`), each report's `inc` |
 | `internal/reconcile/objects.go`: the pod's ServiceAccount, PVC claim and `HOME` on the volume; the StatefulSet's replicas (`replicas`) and image (NOM-50) | `PodCreate`, `PodRemove`, `PodStart`, `PVCFinalize`, `cloned`/`loggedIn`, `RecApplySTS` |
 | `internal/agent/image.go` (`useImage`, called from `agent.go`'s `Run`): the `noma.yaml` image report (NOM-50) | `StartReports`' `"image"` |
-| `noma.yaml` setup commands (NOM-61, not yet built): the `setup` report, the volume's record of the list's hash, the setup error | `StartReports`' `"setup"`, `AgentStartsSetup`, `AgentSetupFails`, `setupDone`, `ListChanged` |
+| `internal/agent/setup.go` (`runSetup`, called from `agent.go`'s `Run` after `useImage`): the `setup` reports, the volume's record of the list's hash (`.noma-setup.json`), the setup error (NOM-61) | `StartReports`' `"setup"`, `AgentStartsSetup`, `AgentSetupFails`, `setupDone`, `ListChanged` |
 | `deploy/dev/server.yaml`: replica count and rollout strategy | `Reconcilers` in each config |
 
 A change touches the verification when it does any of these:
@@ -122,7 +122,7 @@ Read the counterexample (with `/statechart`, or `VERBOSE=1`) and ask, step by st
 
 Verified: one workspace, all interleavings of the steps above. Bounds: at most 1 container crash (0 in `stale-error` and `rollout`), 1 stop, 1 change to the setup list, and 1 reconciler unless a config says 2.
 
-The setup step (M3.5-12) was modeled before its code (NOM-55). NOM-61 adds its files to `covered.sha256` and checks the model against them.
+The setup step (M3.5-12) was modeled before its code (NOM-55) and checked against it when NOM-61 landed: the agent reports `setup` before each command, records the hash of the list it read at start once the last command succeeds and before `starting-claude`, and after a failure reports the error and nothing more. The model's `setupDone` covers the whole list; the code also records how many commands succeeded, so a retry resumes from the failed one. That only skips commands that already ran for the same list, so it changes no property. Setup also runs on the Noma image when `noma.yaml` lists commands but names no image; the model's repo always names one.
 
 The image swap (M3-17) was modeled before its code and checked against it when NOM-50 landed: the image report changes only the image (not the phase or `updated_at`) and wakes the reconciler, the StatefulSet takes its image from the pass's row, and the agent on the base image reports and then waits for its pod to be replaced. Stop and start are in the code (NOM-38). A run explores every reachable state within those bounds.
 
@@ -136,7 +136,7 @@ Not covered:
 - Claude restarting inside a running pod, after a crash or for new credentials (NOM-49). Each restart reports `starting-claude` and then `ready` again, so the phase is still the agent's last report;
 - the agent's `error` reports other than setup's. The reconciler tells them from its own error by the message, so the agent must never report `could not create workspace objects`;
 - a container restart's stale phase: the row keeps the old agent's last report until the new agent's first one, for every phase. Once the new agent has reported, the old agent's late reports change nothing;
-- `noma start` on a workspace whose setup failed. The CLI stops the workspace, waits for `stopped` and starts it, which the model's `ApiStop` and `ApiStart` already cover. NOM-61 must build it that way, and record the hash of the list it read at start;
+- `noma start` on a workspace whose setup failed. The CLI stops the workspace, waits for `stopped` and starts it (`internal/cli/cli.go`'s `start`), which the model's `ApiStop` and `ApiStart` already cover;
 - two phase writes in the same microsecond, which leave `updated_at` equal, so `SetPhaseIfUnchanged` cannot tell them apart;
 - Postgres or Kubernetes losing writes;
 - informer delays: a pass may start at any time, which covers the wake channel, the retry timer and the 5-minute ticker;
