@@ -174,7 +174,7 @@ func (a *AgentServer) status(w http.ResponseWriter, r *http.Request, ws *store.W
 			writeError(w, http.StatusBadRequest, "invalid image")
 			return
 		}
-		if err := a.Store.SetImage(r.Context(), ws.ID, st.Image); err != nil {
+		if err := a.Store.SetImage(r.Context(), ws.ID, max(st.Boot, 0), st.Image); err != nil {
 			internalError(w, err)
 			return
 		}
@@ -192,33 +192,25 @@ func (a *AgentServer) status(w http.ResponseWriter, r *http.Request, ws *store.W
 	if len(st.ClaudeLastExit) > 500 {
 		st.ClaudeLastExit = st.ClaudeLastExit[:500]
 	}
-	if err := a.Store.SetClaudeHealth(r.Context(), ws.ID, max(st.ClaudeRestarts, 0), st.ClaudeLastExit); err != nil {
-		internalError(w, err)
-		return
+	rec := store.AgentStatus{
+		Boot: max(st.Boot, 0), Phase: st.Phase, Message: st.Message,
+		ClaudeRestarts: max(st.ClaudeRestarts, 0), ClaudeLastExit: st.ClaudeLastExit,
 	}
-	signInURL, signInKey := "", ""
 	if st.Phase == api.PhaseSignIn {
 		if st.SignIn == nil || !validSignIn(st.SignIn) {
 			writeError(w, http.StatusBadRequest, "invalid sign-in")
 			return
 		}
-		signInURL, signInKey = st.SignIn.URL, st.SignIn.PublicKey
-	}
-	if err := a.Store.SetSignIn(r.Context(), ws.ID, signInURL, signInKey); err != nil {
-		internalError(w, err)
-		return
+		rec.SignInURL, rec.SignInKey = st.SignIn.URL, st.SignIn.PublicKey
 	}
 	if st.Link != "" {
 		if !claudeLink.MatchString(st.Link) {
 			writeError(w, http.StatusBadRequest, "invalid link")
 			return
 		}
-		if err := a.Store.SetLink(r.Context(), ws.ID, st.Link); err != nil {
-			internalError(w, err)
-			return
-		}
+		rec.Link = st.Link
 	}
-	if err := a.Store.SetPhase(r.Context(), ws.ID, st.Phase, st.Message); err != nil {
+	if err := a.Store.SetStatus(r.Context(), ws.ID, rec); err != nil {
 		internalError(w, err)
 		return
 	}

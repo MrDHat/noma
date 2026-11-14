@@ -37,6 +37,9 @@ type Agent struct {
 	// report carries them. Only the setup goroutine reports.
 	restarts int
 	lastExit string
+	// boot is this agent's start count on the volume; every report
+	// carries it, so the server can drop an older agent's late report.
+	boot int64
 }
 
 // errNewCredentials ends a Claude run so it restarts with new credentials.
@@ -54,6 +57,11 @@ const (
 // server messages until ctx is done. A failed setup is reported as an error
 // phase; the agent keeps running so the pod doesn't crash-loop.
 func (a *Agent) Run(ctx context.Context) error {
+	boot, err := countBoot(a.Dir)
+	if err != nil {
+		return err
+	}
+	a.boot = boot
 	cfg, err := retry(ctx, func() (*api.AgentConfig, error) { return a.Client.Config(ctx) })
 	if err != nil {
 		return err
@@ -295,7 +303,7 @@ func (a *Agent) serve(ctx context.Context) error {
 
 // report sends a status, retrying until the server takes it.
 func (a *Agent) report(ctx context.Context, st api.AgentStatus) {
-	st.ClaudeRestarts, st.ClaudeLastExit = a.restarts, a.lastExit
+	st.ClaudeRestarts, st.ClaudeLastExit, st.Boot = a.restarts, a.lastExit, a.boot
 	_, _ = retry(ctx, func() (struct{}, error) { return struct{}{}, a.Client.Status(ctx, st) })
 }
 
