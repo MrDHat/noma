@@ -33,10 +33,20 @@ func runUninstallGuard(t *testing.T) (bool, string) {
 	t.Cleanup(func() {
 		_, _ = exec.Command("kubectl", "--context", kubeContext(), "-n", "noma-system", "delete", "job", "e2e-uninstall-guard", "--wait=false").CombinedOutput()
 	})
-	_, err = exec.Command("kubectl", "--context", kubeContext(), "-n", "noma-system", "wait", "job/e2e-uninstall-guard",
-		"--for=jsonpath={.status.conditions[?(@.status==\"True\")].type}=Complete", "--timeout=90s").CombinedOutput()
-	logs := kubectl(t, "-n", "noma-system", "logs", "job/e2e-uninstall-guard")
-	return err == nil, logs
+	// The Job has no conditions until its pod ends, so poll its counts.
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		done := kubectl(t, "-n", "noma-system", "get", "job", "e2e-uninstall-guard",
+			"-o", "jsonpath={.status.succeeded}/{.status.failed}")
+		if done != "/" {
+			logs := kubectl(t, "-n", "noma-system", "logs", "job/e2e-uninstall-guard")
+			return strings.HasPrefix(done, "1"), logs
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the uninstall guard Job did not finish within 90s")
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 // helm uninstall fails while a workspace exists (M3.5-18).
