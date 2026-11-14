@@ -152,6 +152,9 @@ type AgentStatus struct {
 	// ClaudeLastExit says how it last stopped.
 	ClaudeRestarts int    `json:"claudeRestarts,omitempty"`
 	ClaudeLastExit string `json:"claudeLastExit,omitempty"`
+	// Boot counts the agent starts on this workspace's volume, this one
+	// included. The server ignores a report older than one it has stored.
+	Boot int64 `json:"boot,omitempty"`
 }
 
 // AgentAccount is the body of POST /agent/v1/account: the Claude account
