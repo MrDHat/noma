@@ -18,6 +18,7 @@ import (
 const pollInterval = time.Second
 
 const usage = `usage:
+  noma connect [--context CTX]      point this CLI at a cluster's Noma install
   noma up [--name NAME] <git-url>   create a workspace for a public repo
   noma ls                           list your workspaces
   noma attach <name>                wait for a workspace and print its link
@@ -39,6 +40,8 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	case "version", "--version":
 		fmt.Fprintln(stdout, "noma", version.Version)
 		return 0
+	case "connect":
+		err = connectCmd(ctx, args[1:], stdout)
 	case "up":
 		err = up(ctx, args[1:], newLines(stdin), stdout)
 	case "ls":
