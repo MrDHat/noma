@@ -2,9 +2,11 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/MrDHat/noma/internal/api"
+	"github.com/MrDHat/noma/internal/store"
 )
 
 // putClaudeSetup stores the user's Claude setup; their workspaces copy it
@@ -29,4 +31,19 @@ func (s *Server) putClaudeSetup(w http.ResponseWriter, r *http.Request, user str
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// claudeSetup gives a workspace's agent its owner's Claude setup, or 204
+// if they have never sent one.
+func (a *AgentServer) claudeSetup(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
+	cs, err := a.Store.ClaudeSetupFor(r.Context(), ws.Owner)
+	if errors.Is(err, store.ErrNotFound) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, api.ClaudeSetup{Archive: cs.Archive})
 }
