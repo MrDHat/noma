@@ -101,7 +101,8 @@ jobs:
       - run: helm lint --strict charts/noma -f charts/noma/values-minikube.yaml
       - run: helm template noma charts/noma -n noma-system >/dev/null
 
-  # The AWS Terraform: formatted, valid, and no HIGH or CRITICAL
+  # The AWS Terraform is formatted and valid, and nothing in the repo (the
+  # Terraform, the chart, the Dockerfiles) has a HIGH or CRITICAL
   # misconfiguration beyond the accepted ones in .trivyignore (M3.5-24).
   # No AWS credentials here; EKS runs are manual acceptance.
   infra:
@@ -132,7 +133,7 @@ jobs:
             terraform -chdir="$dir" init -backend=false -input=false
             terraform -chdir="$dir" validate
           done
-      - run: trivy config --skip-version-check --skip-dirs '**/.terraform' --severity HIGH,CRITICAL --exit-code 1 infra
+      - run: trivy config --skip-version-check --skip-dirs '**/.terraform' --severity HIGH,CRITICAL --exit-code 1 .
 
   e2e:
     runs-on: ubuntu-latest
