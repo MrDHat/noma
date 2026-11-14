@@ -1,7 +1,12 @@
 # Noma on AWS
 
-Terraform for the cluster Noma runs on: a VPC, EKS, and a Graviton node
-group that installs gVisor at boot. Installing Noma itself is the Helm chart's job.
+Terraform for the cluster Noma runs on: a VPC, EKS, a Graviton node group
+that installs gVisor at boot, and the EBS and EFS storage workspaces use. Installing Noma itself is the Helm chart's job.
+
+`make aws-up` does all of the below with your `AWS_PROFILE` and `AWS_REGION`,
+then creates the `gvisor` RuntimeClass and the `noma-workspace` (EBS) and
+`noma-login` (EFS) StorageClasses, and prints the `helm install` and
+`noma connect` commands. By hand:
 
 Once per AWS account, create the state bucket:
 
