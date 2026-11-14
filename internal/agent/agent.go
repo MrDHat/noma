@@ -40,6 +40,8 @@ type Agent struct {
 	// boot is this agent's start count on the volume; every report
 	// carries it, so the server can drop an older agent's late report.
 	boot int64
+	// sendStatus replaces Client.Status in tests.
+	sendStatus func(context.Context, api.AgentStatus) error
 }
 
 // errNewCredentials ends a Claude run so it restarts with new credentials.
@@ -84,8 +86,13 @@ func (a *Agent) Run(ctx context.Context) error {
 		if err == nil {
 			err = a.setup(ctx, cfg)
 		}
+		repo := filepath.Join(a.Dir, repoDir(cfg))
+		var setup []string
 		if err == nil {
-			err = a.useImage(ctx, filepath.Join(a.Dir, repoDir(cfg)))
+			setup, err = a.useImage(ctx, repo)
+		}
+		if err == nil {
+			err = a.runSetup(ctx, repo, setup)
 		}
 		if errors.Is(err, errSwapping) {
 			return // this pod is about to be replaced
@@ -98,7 +105,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.superviseClaude(ctx, &Claude{
 			Bin:  a.ClaudeBin,
 			Home: os.Getenv("HOME"),
-			Dir:  filepath.Join(a.Dir, repoDir(cfg)),
+			Dir:  repo,
 			Name: cfg.Name,
 			Env:  a.vault.env,
 		})
@@ -304,7 +311,11 @@ func (a *Agent) serve(ctx context.Context) error {
 // report sends a status, retrying until the server takes it.
 func (a *Agent) report(ctx context.Context, st api.AgentStatus) {
 	st.ClaudeRestarts, st.ClaudeLastExit, st.Boot = a.restarts, a.lastExit, a.boot
-	_, _ = retry(ctx, func() (struct{}, error) { return struct{}{}, a.Client.Status(ctx, st) })
+	send := a.sendStatus
+	if send == nil {
+		send = a.Client.Status
+	}
+	_, _ = retry(ctx, func() (struct{}, error) { return struct{}{}, send(ctx, st) })
 }
 
 // retry calls f until it succeeds or ctx is done, backing off up to 10s.

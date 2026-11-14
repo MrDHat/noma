@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"sigs.k8s.io/yaml"
 
@@ -19,35 +20,49 @@ import (
 // pod to be replaced with one running it.
 var errSwapping = errors.New("waiting for the project image")
 
-// nomaYAML is the repo's noma.yaml. M3 knows one field; any other is an
+// nomaYAML is the repo's noma.yaml. Any field it doesn't know is an
 // error, so a typo doesn't go unnoticed (M3-16).
 type nomaYAML struct {
 	Image string `json:"image"`
+	// Setup are shell commands that prepare the checkout before Claude
+	// starts (M3.5-12).
+	Setup []string `json:"setup"`
 }
 
-// readNomaYAML returns the image the repo's noma.yaml names, or "" if it
-// has none.
-func readNomaYAML(repo string) (string, error) {
+// maxSetupCommands bounds noma.yaml's setup list.
+const maxSetupCommands = 50
+
+// readNomaYAML returns the repo's noma.yaml, or an empty one if it has
+// none.
+func readNomaYAML(repo string) (nomaYAML, error) {
+	var y nomaYAML
 	f, err := os.Open(filepath.Join(repo, "noma.yaml"))
 	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
+		return y, nil
 	}
 	if err != nil {
-		return "", err
+		return y, err
 	}
 	defer f.Close() //nolint:errcheck
 	b, err := io.ReadAll(io.LimitReader(f, 64<<10))
 	if err != nil {
-		return "", err
+		return y, err
 	}
-	var y nomaYAML
 	if err := yaml.UnmarshalStrict(b, &y); err != nil {
-		return "", fmt.Errorf("noma.yaml: %w", err)
+		return nomaYAML{}, fmt.Errorf("noma.yaml: %w", err)
 	}
 	if y.Image != "" && !api.ValidImage(y.Image) {
-		return "", fmt.Errorf("noma.yaml: %q is not an image reference", y.Image)
+		return nomaYAML{}, fmt.Errorf("noma.yaml: %q is not an image reference", y.Image)
 	}
-	return y.Image, nil
+	if len(y.Setup) > maxSetupCommands {
+		return nomaYAML{}, fmt.Errorf("noma.yaml: setup lists %d commands; at most %d", len(y.Setup), maxSetupCommands)
+	}
+	for i, c := range y.Setup {
+		if strings.TrimSpace(c) == "" {
+			return nomaYAML{}, fmt.Errorf("noma.yaml: setup command %d is empty", i+1)
+		}
+	}
+	return y, nil
 }
 
 // checkImage makes sure a project image can run Noma: git, and the glibc
@@ -65,22 +80,23 @@ func (a *Agent) checkImage(ctx context.Context) error {
 	return nil
 }
 
-// useImage makes sure the pod runs the image the repo's noma.yaml names. On
-// another image it reports the one wanted and returns errSwapping: the
-// reconciler replaces the pod.
-func (a *Agent) useImage(ctx context.Context, repo string) error {
-	want, err := readNomaYAML(repo)
+// useImage makes sure the pod runs the image the repo's noma.yaml names,
+// and returns the setup commands it lists. On another image it reports the
+// one wanted and returns errSwapping: the reconciler replaces the pod.
+func (a *Agent) useImage(ctx context.Context, repo string) ([]string, error) {
+	y, err := readNomaYAML(repo)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	want := y.Image
 	current := os.Getenv("NOMA_PROJECT_IMAGE")
 	switch {
 	case want != "" && want != current:
 		slog.Info("switching to the project image", "image", want)
 		a.report(ctx, api.AgentStatus{Image: want})
-		return errSwapping
+		return nil, errSwapping
 	case want == "" && current != "":
 		slog.Warn("noma.yaml no longer names an image; staying on the project image", "image", current)
 	}
-	return nil
+	return y.Setup, nil
 }

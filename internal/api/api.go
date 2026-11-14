@@ -7,11 +7,16 @@ import (
 	"time"
 )
 
+// SetupFailed starts the message of the error a failed noma.yaml setup
+// command reports. noma start retries such a workspace from that command.
+const SetupFailed = "setup failed:"
+
 // Workspace phases, as reported to the CLI.
 const (
 	PhasePending  = "pending"
 	PhaseStarting = "starting"
 	PhaseCloning  = "cloning"
+	PhaseSetup    = "setup"
 	PhaseClaude   = "starting-claude"
 	PhaseSignIn   = "sign-in"
 	PhaseReady    = "ready"
