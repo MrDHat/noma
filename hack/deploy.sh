@@ -70,9 +70,10 @@ fi
 # fake one needs almost nothing, so tests can run several workspaces.
 values=(-f "${ROOT}/charts/noma/values-minikube.yaml")
 if [ "$CLAUDE" = real ]; then
-  values+=(--set workspace.memory=2Gi --set workspace.fakeClaude=false)
+  values+=(--set workspace.resources.limits.memory=2Gi --set workspace.fakeClaude=false)
 else
-  values+=(--set workspace.memory=256Mi --set workspace.fakeClaude=true)
+  values+=(--set workspace.resources.requests.memory=128Mi --set workspace.resources.limits.memory=256Mi
+    --set workspace.fakeClaude=true)
 fi
 if [ -n "${NOMA_RELEASE:-}" ]; then
   values+=(--set "server.image=${server_image}" --set server.pullPolicy=IfNotPresent

@@ -139,16 +139,14 @@ func (r *Reconciler) ensure(ctx context.Context, ws *store.Workspace) error {
 			return err
 		},
 		func() error {
-			_, err := r.Kube.CoreV1().PersistentVolumeClaims(ns).Apply(ctx, loginClaim(ws.Owner), applyOpts)
-			return err
+			return r.createClaim(ctx, loginClaim(ws.Owner, r.Config))
 		},
 		func() error {
 			_, err := r.Kube.CoreV1().ServiceAccounts(ns).Apply(ctx, serviceAccount(ws), applyOpts)
 			return err
 		},
 		func() error {
-			_, err := r.Kube.CoreV1().PersistentVolumeClaims(ns).Apply(ctx, volumeClaim(ws), applyOpts)
-			return err
+			return r.createClaim(ctx, volumeClaim(ws, r.Config))
 		},
 		func() error {
 			_, err := r.Kube.AppsV1().StatefulSets(ns).Apply(ctx, statefulSet(ws, r.Config), applyOpts)
@@ -166,6 +164,16 @@ func (r *Reconciler) ensure(ctx context.Context, ws *store.Workspace) error {
 		}
 	}
 	return r.observe(ctx, ws)
+}
+
+// createClaim creates a claim unless it exists. A claim being deleted
+// still exists, so this never brings one back.
+func (r *Reconciler) createClaim(ctx context.Context, c *corev1.PersistentVolumeClaim) error {
+	_, err := r.Kube.CoreV1().PersistentVolumeClaims(c.Namespace).Create(ctx, c, metav1.CreateOptions{FieldManager: fieldManager})
+	if apierrors.IsAlreadyExists(err) {
+		return nil
+	}
+	return err
 }
 
 // errObjects is the message of the error phase ensure sets.
