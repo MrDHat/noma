@@ -107,9 +107,10 @@ ReadRows == Serving /\ \A w \in W : snap[w] = "none"
   /\ snap' = rows
   /\ UNCHANGED <<rows, closing, create, shared, excl, hook, ns, objs, vols, server, td>>
 
-\* ensure applies the namespace, the claude-login claim, the volume claim and
-\* the StatefulSet, from the row it read, even if the row changed since. The
-\* CSI driver makes the volumes.
+\* ensure applies the namespace and the StatefulSet and creates the
+\* claude-login and volume claims unless they exist (createClaim), from the
+\* row it read, even if the row changed since. The CSI driver makes the
+\* volumes.
 Ensure(w) == Serving /\ snap[w] = "running"
   /\ ns' = TRUE
   /\ objs' = objs \cup {w}
