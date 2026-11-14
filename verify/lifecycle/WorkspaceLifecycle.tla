@@ -231,7 +231,8 @@ RecApply(r, from, to, effect) ==
 
 RecApplySA(r) == RecApply(r, "applySA", "applyPVC",
     sa' = TRUE /\ UNCHANGED <<sts, replicas, stsImage, pvc>>)
-\* Applying to a terminating PVC does not bring it back.
+\* createClaim: Create, ignoring AlreadyExists. A terminating claim still
+\* exists, so it is not brought back, and an existing one is left as it is.
 RecApplyPVC(r) == RecApply(r, "applyPVC", "applySTS",
     pvc' = (IF pvc = "none" THEN "bound" ELSE pvc) /\ UNCHANGED <<sa, sts, replicas, stsImage>>)
 \* statefulSet(ws, cfg): replicas from the desired state, image from the row.

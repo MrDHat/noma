@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -60,9 +61,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	memory, err := resource.ParseQuantity(envOr("NOMA_WORKSPACE_MEMORY", "2Gi"))
+	sizes, err := workspaceSizes()
 	if err != nil {
-		return fmt.Errorf("NOMA_WORKSPACE_MEMORY: %w", err)
+		return err
 	}
 	tlsDir := envOr("NOMA_TLS_DIR", "/etc/noma/tls")
 	agentCA, err := os.ReadFile(tlsDir + "/ca.crt")
@@ -77,13 +78,12 @@ func run() error {
 	if fakeClaude {
 		profileURL = agentURL + "/fake/claude/profile"
 	}
-	rec := reconcile.New(st, kube, reconcile.Config{
-		AgentCA:          string(agentCA),
-		Image:            envOr("NOMA_WORKSPACE_IMAGE", "noma-workspace:dev"),
-		ServerURL:        agentURL,
-		Memory:           memory,
-		ClaudeProfileURL: profileURL,
-	})
+	cfg := sizes
+	cfg.AgentCA = string(agentCA)
+	cfg.Image = envOr("NOMA_WORKSPACE_IMAGE", "noma-workspace:dev")
+	cfg.ServerURL = agentURL
+	cfg.ClaudeProfileURL = profileURL
+	rec := reconcile.New(st, kube, cfg)
 	go rec.Run(ctx)
 
 	// The CLI API, and the agent endpoint, which only workspaces reach and
@@ -119,4 +119,44 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// workspaceSizes reads the workspace sizing and storage settings, which
+// the chart sets from its values (M3.5-7, M3.5-20, M3.5-23).
+func workspaceSizes() (reconcile.Config, error) {
+	var cfg reconcile.Config
+	q := map[string]resource.Quantity{}
+	for _, v := range []struct{ env, def string }{
+		{"NOMA_WORKSPACE_MEMORY_REQUEST", "512Mi"},
+		{"NOMA_WORKSPACE_MEMORY_LIMIT", "3Gi"},
+		{"NOMA_WORKSPACE_CPU_REQUEST", "100m"},
+		{"NOMA_WORKSPACE_CPU_LIMIT", "2"},
+		{"NOMA_WORKSPACE_DISK", "20Gi"},
+	} {
+		parsed, err := resource.ParseQuantity(envOr(v.env, v.def))
+		if err != nil {
+			return cfg, fmt.Errorf("%s: %w", v.env, err)
+		}
+		q[v.env] = parsed
+	}
+	cfg.Resources = corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceMemory: q["NOMA_WORKSPACE_MEMORY_REQUEST"],
+			corev1.ResourceCPU:    q["NOMA_WORKSPACE_CPU_REQUEST"],
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceMemory: q["NOMA_WORKSPACE_MEMORY_LIMIT"],
+			corev1.ResourceCPU:    q["NOMA_WORKSPACE_CPU_LIMIT"],
+		},
+	}
+	cfg.DiskSize = q["NOMA_WORKSPACE_DISK"]
+	cfg.StorageClass = os.Getenv("NOMA_WORKSPACE_STORAGE_CLASS")
+	cfg.LoginStorageClass = os.Getenv("NOMA_LOGIN_STORAGE_CLASS")
+	cfg.LoginAccessMode = corev1.PersistentVolumeAccessMode(envOr("NOMA_LOGIN_ACCESS_MODE", string(corev1.ReadWriteOnce)))
+	switch cfg.LoginAccessMode {
+	case corev1.ReadWriteOnce, corev1.ReadWriteMany:
+	default:
+		return cfg, fmt.Errorf("NOMA_LOGIN_ACCESS_MODE must be ReadWriteOnce or ReadWriteMany, not %q", cfg.LoginAccessMode)
+	}
+	return cfg, nil
 }

@@ -10,9 +10,27 @@ server:
 workspace:
   # The image every workspace starts on (it clones the repo).
   image: noma-workspace:dev
-  memory: 2Gi
+  # Each workspace container's requests and limits (M3.5-7).
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 100m
+    limits:
+      memory: 3Gi
+      cpu: "2"
+  # Each workspace volume's size, and its StorageClass ("" is the cluster's
+  # default). Both apply to new workspaces only (M3.5-23).
+  disk: 20Gi
+  storageClassName: ""
   # Use the fake claude binary baked into the workspace image (tests only).
   fakeClaude: false
+
+# Each user's Claude login, which all their workspaces mount. Use
+# ReadWriteMany (EFS on EKS) when workspaces run on more than one node
+# (M3.5-20). Applies to users who have no login claim yet.
+login:
+  storageClassName: ""
+  accessMode: ReadWriteOnce
 
 postgres:
   # postgres:17-alpine, multi-arch index.
