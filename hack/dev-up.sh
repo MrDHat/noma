@@ -59,16 +59,6 @@ echo "==> Noma"
 "${ROOT}/hack/deploy.sh"
 
 echo "==> CLI config"
-config="${NOMA_CONFIG:-${HOME}/.config/noma/config.json}"
-mkdir -p "$(dirname "$config")"
-token="$(kc -n noma-system get secret noma-server -o jsonpath='{.data.admin-token}' | base64 -d)"
-(umask 077 && cat >"$config" <<JSON
-{
-  "token": "${token}",
-  "portForward": {"context": "${PROFILE}", "namespace": "noma-system", "service": "noma-server", "port": 8080}
-}
-JSON
-)
-echo "wrote ${config}"
+(cd "$ROOT" && go run ./cmd/noma connect --context "$PROFILE")
 
 echo "==> ready (kubectl context: ${PROFILE})"
