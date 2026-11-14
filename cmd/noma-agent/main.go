@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/MrDHat/noma/internal/agent"
+	"github.com/MrDHat/noma/internal/isolation"
 	"github.com/MrDHat/noma/internal/version"
 )
 
@@ -20,6 +22,13 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "credential" {
 		if err := agent.CredentialHelper(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "isolation-check" {
+		if err := isolationCheck(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -59,4 +68,19 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// isolationCheck checks, from inside a workspace, what it can and can't
+// reach (M3.5-10, M3.5-11). The e2e tests and make demo-aws run it.
+func isolationCheck(args []string) error {
+	fs := flag.NewFlagSet("isolation-check", flag.ContinueOnError)
+	var o isolation.Options
+	fs.StringVar(&o.Kubelet, "kubelet", "", "the node's address, which must refuse the kubelet port")
+	fs.StringVar(&o.Pod, "pod", "", "another pod's host:port, which must be refused")
+	fs.StringVar(&o.PublicAPI, "public-api", "", "the cluster's public API endpoint, which must answer 401 or 403")
+	fs.StringVar(&o.Internet, "internet", "https://github.com", "a public URL that must answer")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return isolation.Run(context.Background(), o, os.Stdout)
 }
