@@ -136,14 +136,53 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
-// CreateWorkspace inserts w. It returns ErrNameTaken if the owner already uses w.Name.
+// ErrClosing is returned when a workspace is created after the install
+// was closed for uninstall.
+var ErrClosing = errors.New("install is closing")
+
+// CreateWorkspace inserts w. It returns ErrNameTaken if the owner already
+// uses w.Name, and ErrClosing once the install is closing. It holds the
+// install row FOR SHARE from reading closing to the commit, so a close
+// can't count the rows in between (verify/teardown: CreateBegin..Commit).
 func (s *Store) CreateWorkspace(ctx context.Context, w *Workspace) error {
-	_, err := s.db.NewInsert().Model(w).Returning("*").Exec(ctx)
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		var closing bool
+		if err := tx.QueryRowContext(ctx, "SELECT closing FROM install WHERE id = 1 FOR SHARE").Scan(&closing); err != nil {
+			return err
+		}
+		if closing {
+			return ErrClosing
+		}
+		_, err := tx.NewInsert().Model(w).Returning("*").Exec(ctx)
+		return err
+	})
 	var pgErr pgdriver.Error
 	if errors.As(err, &pgErr) && pgErr.IntegrityViolation() {
 		return ErrNameTaken
 	}
 	return err
+}
+
+// CloseInstall marks the install closing, after which every create is
+// refused, unless any workspace row exists, deleting ones included; then it
+// returns how many and changes nothing. It locks the install row before
+// counting, so a create that read closing as false has committed by then
+// (verify/teardown: CloseBegin, CloseCount, CloseCommit).
+func (s *Store) CloseInstall(ctx context.Context) (int, error) {
+	var left int
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.ExecContext(ctx, "UPDATE install SET closing = closing WHERE id = 1"); err != nil {
+			return err
+		}
+		n, err := tx.NewSelect().Model((*Workspace)(nil)).Count(ctx)
+		if err != nil || n > 0 {
+			left = int(n)
+			return err
+		}
+		_, err = tx.ExecContext(ctx, "UPDATE install SET closing = true WHERE id = 1")
+		return err
+	})
+	return left, err
 }
 
 // WorkspaceByName returns the owner's workspace called name.

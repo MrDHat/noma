@@ -3,8 +3,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -37,6 +39,13 @@ func main() {
 				os.Exit(1)
 			}
 			fmt.Println("the cluster has everything Noma needs")
+			return
+		case "close-install":
+			if err := closeInstall(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			fmt.Println("no workspaces left; the install is closed")
 			return
 		case "sandboxed":
 			ok, err := preflight.Sandboxed()
@@ -205,4 +214,29 @@ func runPreflight() error {
 		Image:          os.Getenv("NOMA_PREFLIGHT_IMAGE"),
 		Timeout:        2 * time.Minute,
 	})
+}
+
+// closeInstall asks noma-server to close the install; the chart's
+// pre-delete hook runs it, so helm uninstall fails while workspaces exist.
+func closeInstall() error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, envOr("NOMA_API_URL", "http://localhost:8080")+"/v1/install/close", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("NOMA_ADMIN_TOKEN"))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("reach noma-server: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body)
+	return fmt.Errorf("noma-server refused to close: %s %s", resp.Status, body.Error)
 }
