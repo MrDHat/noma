@@ -1,5 +1,6 @@
 // Package preflight checks that a cluster has what Noma needs before the
-// chart installs it (M3.5-15). The chart never creates these itself: the
+// chart installs it (M3.5-15): the gVisor RuntimeClass, the StorageClasses,
+// and NetworkPolicy enforcement. The chart never creates these itself: the
 // RuntimeClass and StorageClasses belong to whoever runs the cluster.
 package preflight
 
@@ -53,7 +54,11 @@ func Check(ctx context.Context, kube kubernetes.Interface, o Options) error {
 	if len(missing) > 0 {
 		return errors.New("the cluster is missing what Noma needs:\n  - " + strings.Join(missing, "\n  - "))
 	}
-	return checkSandbox(ctx, kube, o)
+	if err := runPod(ctx, kube, o, "preflight", "sandboxed",
+		fmt.Sprintf("a pod under RuntimeClass %q is not sandboxed by gVisor", o.RuntimeClass)); err != nil {
+		return err
+	}
+	return checkNetworkPolicy(ctx, kube, o)
 }
 
 func checkStorageClass(ctx context.Context, kube kubernetes.Interface, class string) (string, error) {
@@ -76,14 +81,15 @@ func checkStorageClass(ctx context.Context, kube kubernetes.Interface, class str
 	return "no StorageClass is the cluster's default: mark one as default or name one in the chart's values", nil
 }
 
-// checkSandbox runs one pod under the RuntimeClass and waits for it to
-// confirm it is sandboxed: a RuntimeClass whose handler is missing or is
-// not gVisor fails here.
-func checkSandbox(ctx context.Context, kube kubernetes.Interface, o Options) error {
+// runPod runs the noma-server image's command in one pod under the
+// RuntimeClass, labelled component, and waits for it to succeed. A
+// RuntimeClass whose handler is missing or is not gVisor fails here too;
+// failed is the error when the command itself fails.
+func runPod(ctx context.Context, kube kubernetes.Interface, o Options, component, command, failed string) error {
 	pods := kube.CoreV1().Pods(o.Namespace)
-	pod, err := pods.Create(ctx, sandboxPod(o), metav1.CreateOptions{})
+	pod, err := pods.Create(ctx, checkPod(o, component, command), metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("start the sandbox check pod: %w", err)
+		return fmt.Errorf("start the %s check pod: %w", command, err)
 	}
 	defer func() {
 		_ = pods.Delete(context.Background(), pod.Name, metav1.DeleteOptions{})
@@ -99,7 +105,7 @@ func checkSandbox(ctx context.Context, kube kubernetes.Interface, o Options) err
 		case corev1.PodSucceeded:
 			return nil
 		case corev1.PodFailed:
-			return fmt.Errorf("a pod under RuntimeClass %q is not sandboxed by gVisor", o.RuntimeClass)
+			return errors.New(failed)
 		}
 		select {
 		case <-ctx.Done():
@@ -110,11 +116,11 @@ func checkSandbox(ctx context.Context, kube kubernetes.Interface, o Options) err
 	}
 }
 
-func sandboxPod(o Options) *corev1.Pod {
+func checkPod(o Options, component, command string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "noma-preflight-sandbox-",
-			Labels:       map[string]string{"app.kubernetes.io/name": "noma", "app.kubernetes.io/component": "preflight"},
+			GenerateName: "noma-preflight-" + command + "-",
+			Labels:       map[string]string{"app.kubernetes.io/name": "noma", "app.kubernetes.io/component": component},
 		},
 		Spec: corev1.PodSpec{
 			RuntimeClassName:             &o.RuntimeClass,
@@ -125,9 +131,9 @@ func sandboxPod(o Options) *corev1.Pod {
 				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			},
 			Containers: []corev1.Container{{
-				Name:    "sandboxed",
+				Name:    command,
 				Image:   o.Image,
-				Command: []string{"/noma-server", "sandboxed"},
+				Command: []string{"/noma-server", command},
 				SecurityContext: &corev1.SecurityContext{
 					AllowPrivilegeEscalation: ptr.To(false),
 					ReadOnlyRootFilesystem:   ptr.To(true),
