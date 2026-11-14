@@ -155,7 +155,7 @@ func (a *AgentServer) config(w http.ResponseWriter, r *http.Request, ws *store.W
 
 // agentPhases are the phases an agent may report.
 var agentPhases = map[string]bool{
-	api.PhaseCloning: true, api.PhaseClaude: true, api.PhaseSignIn: true,
+	api.PhaseCloning: true, api.PhaseSetup: true, api.PhaseClaude: true, api.PhaseSignIn: true,
 	api.PhaseReady: true, api.PhaseError: true,
 }
 
