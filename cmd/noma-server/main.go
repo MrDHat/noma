@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"github.com/MrDHat/noma/internal/preflight"
 	"github.com/MrDHat/noma/internal/reconcile"
 	"github.com/MrDHat/noma/internal/secrets"
 	"github.com/MrDHat/noma/internal/server"
@@ -25,9 +26,26 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
-		fmt.Println("noma-server", version.Version)
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version", "--version":
+			fmt.Println("noma-server", version.Version)
+			return
+		case "preflight":
+			if err := runPreflight(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			fmt.Println("the cluster has everything Noma needs")
+			return
+		case "sandboxed":
+			ok, err := preflight.Sandboxed()
+			if err != nil || !ok {
+				fmt.Fprintln(os.Stderr, "not running in gVisor", err)
+				os.Exit(1)
+			}
+			return
+		}
 	}
 	if err := run(); err != nil {
 		slog.Error("noma-server failed", "err", err)
@@ -150,6 +168,7 @@ func workspaceSizes() (reconcile.Config, error) {
 		},
 	}
 	cfg.DiskSize = q["NOMA_WORKSPACE_DISK"]
+	cfg.RuntimeClass = envOr("NOMA_RUNTIME_CLASS", "gvisor")
 	cfg.StorageClass = os.Getenv("NOMA_WORKSPACE_STORAGE_CLASS")
 	cfg.LoginStorageClass = os.Getenv("NOMA_LOGIN_STORAGE_CLASS")
 	cfg.LoginAccessMode = corev1.PersistentVolumeAccessMode(envOr("NOMA_LOGIN_ACCESS_MODE", string(corev1.ReadWriteOnce)))
@@ -159,4 +178,31 @@ func workspaceSizes() (reconcile.Config, error) {
 		return cfg, fmt.Errorf("NOMA_LOGIN_ACCESS_MODE must be ReadWriteOnce or ReadWriteMany, not %q", cfg.LoginAccessMode)
 	}
 	return cfg, nil
+}
+
+// runPreflight is the chart's pre-install and pre-upgrade hook (M3.5-15):
+// it fails, naming what is missing, unless the cluster has what the
+// server's settings need.
+func runPreflight() error {
+	sizes, err := workspaceSizes()
+	if err != nil {
+		return err
+	}
+	kubeConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return fmt.Errorf("kubernetes config: %w", err)
+	}
+	kube, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return preflight.Check(ctx, kube, preflight.Options{
+		RuntimeClass:   sizes.RuntimeClass,
+		StorageClasses: []string{sizes.StorageClass, sizes.LoginStorageClass},
+		Namespace:      os.Getenv("POD_NAMESPACE"),
+		Image:          os.Getenv("NOMA_PREFLIGHT_IMAGE"),
+		Timeout:        2 * time.Minute,
+	})
 }

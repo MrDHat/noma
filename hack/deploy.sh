@@ -97,8 +97,12 @@ fi
 
 # --force-conflicts: the chart owns these objects, including fields kubectl
 # set on clusters made before it.
-helm --kube-context "$PROFILE" upgrade --install noma "${ROOT}/charts/noma" \
-  -n noma-system --create-namespace "${values[@]}" --force-conflicts --wait --timeout 5m
+if ! helm --kube-context "$PROFILE" upgrade --install noma "${ROOT}/charts/noma" \
+  -n noma-system --create-namespace "${values[@]}" --force-conflicts --wait --timeout 5m; then
+  # The preflight check's log names what the cluster is missing.
+  kc -n noma-system logs job/noma-preflight 2>/dev/null || true
+  exit 1
+fi
 if [ -z "${NOMA_RELEASE:-}" ]; then
   # The images keep their :dev tag, so a new build needs a restart.
   kc -n noma-system rollout restart deployment/noma-server
