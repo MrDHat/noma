@@ -192,3 +192,13 @@ var imageRef = regexp.MustCompile(`^([a-z0-9-]+(\.[a-z0-9-]+)*(:[0-9]{1,5})?/)?[
 
 // ValidImage reports whether s is a container image reference.
 func ValidImage(s string) bool { return len(s) <= 255 && imageRef.MatchString(s) }
+
+// MaxClaudeSetup bounds the packed Claude setup the CLI uploads (M3.5-13).
+const MaxClaudeSetup = 4 << 20
+
+// ClaudeSetup is the body of PUT /v1/claude-setup: the user's CLAUDE.md,
+// skills and settings.json from ~/.claude, as a tar.gz. Workspaces copy it
+// into their own ~/.claude when they start.
+type ClaudeSetup struct {
+	Archive []byte `json:"archive"`
+}

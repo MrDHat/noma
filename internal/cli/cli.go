@@ -89,6 +89,9 @@ func up(ctx context.Context, args []string, stdin *lines, stdout io.Writer) erro
 		return err
 	}
 	defer c.Close()
+	if err := sendClaudeSetup(ctx, c, stdout); err != nil {
+		return err
+	}
 	git := laptopGitIdentity(ctx)
 	if git == nil {
 		fmt.Fprintln(stdout, "warning: git user.name or user.email is not set on this machine; workspaces keep the identity from your last noma up, if any")
@@ -279,6 +282,9 @@ func start(ctx context.Context, args []string, stdin *lines, stdout io.Writer) e
 		if err := stopAndWait(ctx, c, args[0], stdout); err != nil {
 			return err
 		}
+	}
+	if err := sendClaudeSetup(ctx, c, stdout); err != nil {
+		return err
 	}
 	if err := c.StartWorkspace(ctx, args[0]); err != nil {
 		return err

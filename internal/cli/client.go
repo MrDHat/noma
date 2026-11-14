@@ -117,3 +117,8 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
+
+// PutClaudeSetup replaces the user's stored Claude setup.
+func (c *Client) PutClaudeSetup(ctx context.Context, archive []byte) error {
+	return c.do(ctx, http.MethodPut, "/v1/claude-setup", api.ClaudeSetup{Archive: archive}, nil)
+}
