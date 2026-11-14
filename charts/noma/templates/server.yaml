@@ -76,6 +76,8 @@ spec:
               value: {{ .Values.workspace.resources.requests.cpu | quote }}
             - name: NOMA_WORKSPACE_CPU_LIMIT
               value: {{ .Values.workspace.resources.limits.cpu | quote }}
+            - name: NOMA_RUNTIME_CLASS
+              value: {{ .Values.workspace.runtimeClassName | quote }}
             - name: NOMA_WORKSPACE_DISK
               value: {{ .Values.workspace.disk | quote }}
             - name: NOMA_WORKSPACE_STORAGE_CLASS
