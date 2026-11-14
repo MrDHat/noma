@@ -3,7 +3,7 @@ LDFLAGS := -s -w -X github.com/MrDHat/noma/internal/version.Version=$(VERSION)
 BINARIES := noma noma-server noma-agent
 BIN ?= bin
 
-.PHONY: build test lint fmt dev-up daily-up dev-down deploy e2e demo-real verify verify-lifecycle verify-credentials verify-teardown check-claude-login
+.PHONY: build test lint fmt dev-up daily-up dev-down deploy e2e demo-real aws-up verify verify-lifecycle verify-credentials verify-teardown check-claude-login
 
 build:
 	@mkdir -p $(BIN)
@@ -38,6 +38,11 @@ demo-real:
 
 e2e:
 	go test -tags e2e -count=1 -v ./test/e2e/...
+
+# The EKS cluster and its prerequisites (infra/aws). It costs money while
+# it runs.
+aws-up:
+	hack/aws-up.sh
 
 verify: verify-lifecycle verify-credentials verify-teardown
 
