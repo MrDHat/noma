@@ -47,6 +47,12 @@ func main() {
 			}
 			fmt.Println("no workspaces left; the install is closed")
 			return
+		case "egress-blocked":
+			if !preflight.EgressBlocked(time.Minute) {
+				fmt.Fprintln(os.Stderr, "still reaching the Kubernetes API with all egress denied")
+				os.Exit(1)
+			}
+			return
 		case "sandboxed":
 			ok, err := preflight.Sandboxed()
 			if err != nil || !ok {
