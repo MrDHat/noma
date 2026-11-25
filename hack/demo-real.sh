@@ -22,8 +22,8 @@ pause() { read -r -p "$1 Press Enter to go on... " _; }
 NOMA_CLAUDE=real "${ROOT}/hack/dev-up.sh"
 noma="${ROOT}/bin/noma"
 for ws in demo-a demo-b demo-noma; do "$noma" rm "$ws" >/dev/null 2>&1 || true; done
-# Each workspace on real Claude reserves 2Gi, and the node fits two at a
-# time, so other running workspaces leave the demo no room.
+# Each workspace on real Claude may use up to 2Gi, and the node has room
+# for two at a time, so other running workspaces leave the demo no room.
 others="$("$noma" ls | awk 'NR > 1 && $2 != "stopped" { print $1 }')"
 [ -z "$others" ] || fail "the demo needs the room; stop your running workspaces first ($(echo $others)) with bin/noma stop NAME"
 
@@ -100,7 +100,7 @@ wait_ready demo-a
 [ "$(link_of demo-a)" = "$link_a" ] || fail "demo-a's link changed after its pod was deleted"
 echo "OK: demo-a is back with the same link"
 
-# Make room for demo-noma: the node fits two workspaces.
+# Make room for demo-noma: the node has room for two workspaces.
 for ws in demo-a demo-b; do "$noma" rm "$ws"; done
 
 step "6. A secret, the noma repo on its own image, and a push"

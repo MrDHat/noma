@@ -4,6 +4,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -24,8 +25,6 @@ const (
 // Workspace pod settings for M2.
 const (
 	workspaceUID  = 1000
-	workspaceCPU  = "500m"
-	volumeSize    = "1Gi"
 	runtimeClass  = "gvisor"
 	tokenPath     = "/var/run/secrets/noma"
 	tokenLifetime = 3600
@@ -37,8 +36,19 @@ type Config struct {
 	Image string
 	// ServerURL is noma-server's in-cluster agent endpoint.
 	ServerURL string
-	// Memory is each workspace's memory request and limit.
-	Memory resource.Quantity
+	// Resources are each workspace container's requests and limits
+	// (M3.5-7).
+	Resources corev1.ResourceRequirements
+	// DiskSize is each workspace volume's size (M3.5-23).
+	DiskSize resource.Quantity
+	// StorageClass is the workspace volumes' StorageClass; "" is the
+	// cluster's default.
+	StorageClass string
+	// LoginStorageClass and LoginAccessMode are for each user's login
+	// claim, which all their workspaces mount: ReadWriteMany once
+	// workspaces run on several nodes, as on EFS (M3.5-20).
+	LoginStorageClass string
+	LoginAccessMode   corev1.PersistentVolumeAccessMode
 	// AgentCA is the PEM CA that signs the agent endpoint's certificate.
 	// Workspaces get it from a ConfigMap, so published images work with
 	// any cluster's CA.
@@ -108,13 +118,29 @@ func serviceAccount(ws *store.Workspace) *corev1ac.ServiceAccountApplyConfigurat
 		WithAutomountServiceAccountToken(false)
 }
 
-func volumeClaim(ws *store.Workspace) *corev1ac.PersistentVolumeClaimApplyConfiguration {
-	return corev1ac.PersistentVolumeClaim(ws.ID, namespaceFor(ws.Owner)).
-		WithLabels(workspaceLabels(ws)).
-		WithSpec(corev1ac.PersistentVolumeClaimSpec().
-			WithAccessModes(corev1.ReadWriteOnce).
-			WithResources(corev1ac.VolumeResourceRequirements().
-				WithRequests(corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(volumeSize)})))
+func volumeClaim(ws *store.Workspace, cfg Config) *corev1.PersistentVolumeClaim {
+	return claim(ws.ID, namespaceFor(ws.Owner), workspaceLabels(ws), cfg.StorageClass,
+		corev1.ReadWriteOnce, cfg.DiskSize)
+}
+
+// claim is a PersistentVolumeClaim. The reconciler only ever creates
+// claims: Kubernetes refuses most changes to one, so a changed size or
+// class applies to new workspaces and leaves existing volumes alone.
+func claim(name, ns string, labels map[string]string, class string,
+	mode corev1.PersistentVolumeAccessMode, size resource.Quantity) *corev1.PersistentVolumeClaim {
+	c := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{mode},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceStorage: size},
+			},
+		},
+	}
+	if class != "" {
+		c.Spec.StorageClassName = &class
+	}
+	return c
 }
 
 // caConfigMap holds the CA workspaces trust for noma-server's agent
@@ -133,13 +159,9 @@ const (
 // loginClaim is the user's Claude login, shared by all their workspaces:
 // sign in once and every workspace starts signed in. Nothing deletes it
 // with a workspace.
-func loginClaim(owner string) *corev1ac.PersistentVolumeClaimApplyConfiguration {
-	return corev1ac.PersistentVolumeClaim(loginClaimName, namespaceFor(owner)).
-		WithLabels(managedLabels(owner)).
-		WithSpec(corev1ac.PersistentVolumeClaimSpec().
-			WithAccessModes(corev1.ReadWriteOnce).
-			WithResources(corev1ac.VolumeResourceRequirements().
-				WithRequests(corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(loginClaimSize)})))
+func loginClaim(owner string, cfg Config) *corev1.PersistentVolumeClaim {
+	return claim(loginClaimName, namespaceFor(owner), managedLabels(owner), cfg.LoginStorageClass,
+		cfg.LoginAccessMode, resource.MustParse(loginClaimSize))
 }
 
 // The login claim, and where workspaces mount it. Claude keeps its
@@ -172,10 +194,6 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 	}
 	if cfg.ClaudeProfileURL != "" {
 		env = append(env, corev1ac.EnvVar().WithName("NOMA_CLAUDE_PROFILE_URL").WithValue(cfg.ClaudeProfileURL))
-	}
-	limits := corev1.ResourceList{
-		corev1.ResourceMemory: cfg.Memory,
-		corev1.ResourceCPU:    resource.MustParse(workspaceCPU),
 	}
 	image := cfg.Image
 	var (
@@ -224,7 +242,7 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 						WithImagePullPolicy(corev1.PullIfNotPresent).
 						WithCommand(command...).
 						WithEnv(env...).
-						WithResources(corev1ac.ResourceRequirements().WithRequests(limits).WithLimits(limits)).
+						WithResources(resources(cfg)).
 						WithSecurityContext(corev1ac.SecurityContext().
 							WithAllowPrivilegeEscalation(false).
 							WithReadOnlyRootFilesystem(true).
@@ -271,17 +289,22 @@ func initContainers(ws *store.Workspace, cfg Config) []*corev1ac.ContainerApplyC
 		return nil
 	}
 	// Files in the in-memory volume count against the container that
-	// writes them, so the copy gets the workspace's own memory.
-	limits := corev1.ResourceList{corev1.ResourceMemory: cfg.Memory, corev1.ResourceCPU: resource.MustParse(workspaceCPU)}
+	// writes them, so the copy gets the workspace's own resources.
 	return []*corev1ac.ContainerApplyConfiguration{corev1ac.Container().
 		WithName("noma-tools").
 		WithImage(cfg.Image).
 		WithImagePullPolicy(corev1.PullIfNotPresent).
 		WithCommand("cp", "/usr/local/bin/noma-agent", "/usr/local/bin/claude", toolsDir+"/").
-		WithResources(corev1ac.ResourceRequirements().WithRequests(limits).WithLimits(limits)).
+		WithResources(resources(cfg)).
 		WithSecurityContext(corev1ac.SecurityContext().
 			WithAllowPrivilegeEscalation(false).
 			WithReadOnlyRootFilesystem(true).
 			WithCapabilities(corev1ac.Capabilities().WithDrop("ALL"))).
 		WithVolumeMounts(corev1ac.VolumeMount().WithName("noma-tools").WithMountPath(toolsDir))}
+}
+
+func resources(cfg Config) *corev1ac.ResourceRequirementsApplyConfiguration {
+	return corev1ac.ResourceRequirements().
+		WithRequests(cfg.Resources.Requests).
+		WithLimits(cfg.Resources.Limits)
 }
