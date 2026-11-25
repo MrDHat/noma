@@ -1,7 +1,7 @@
 # Noma on AWS
 
-Terraform for the cluster Noma runs on: a VPC, EKS, and (next) a Graviton
-node group with gVisor. Installing Noma itself is the Helm chart's job.
+Terraform for the cluster Noma runs on: a VPC, EKS, and a Graviton node
+group that installs gVisor at boot. Installing Noma itself is the Helm chart's job.
 
 Once per AWS account, create the state bucket:
 
@@ -17,4 +17,5 @@ terraform -chdir=infra/aws init -backend-config="bucket=noma-tfstate-<account id
 terraform -chdir=infra/aws apply
 ```
 
-Variables: `region`, `profile`, `cluster_name`, `kubernetes_version`.
+Variables: `region`, `profile`, `cluster_name`, `kubernetes_version`,
+`node_instance_type` (t4g.large), `node_count` (1), `node_disk_size` (50 GiB).
