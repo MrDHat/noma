@@ -54,6 +54,9 @@ type Workspace struct {
 	// ClaudeRestarts and ClaudeLastExit are the agent's last report on Claude.
 	ClaudeRestarts int    `bun:",notnull"`
 	ClaudeLastExit string `bun:",notnull"`
+	// Boot is the boot of the agent that last reported. Each agent counts
+	// its start on the workspace volume, so a later agent has a higher one.
+	Boot int64 `bun:",notnull"`
 	// AgentSeenAt is when the agent last polled, kept to the minute.
 	AgentSeenAt time.Time `bun:",nullzero"`
 	CreatedAt   time.Time `bun:",notnull,default:current_timestamp"`
@@ -224,31 +227,46 @@ func (s *Store) setDesired(desired, phase string) *bun.UpdateQuery {
 		Set("updated_at = now()")
 }
 
-// SetSignIn records a pending Claude sign-in, or clears it with empty values.
-func (s *Store) SetSignIn(ctx context.Context, id, url, key string) error {
-	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
-		Set("signin_url = ?", url).
-		Set("signin_key = ?", key).
-		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+// AgentStatus is what one agent report records.
+type AgentStatus struct {
+	// Boot is the reporting agent's boot.
+	Boot           int64
+	Phase, Message string
+	// SignInURL and SignInKey are empty unless the phase is sign-in.
+	SignInURL, SignInKey string
+	// Link is left as it is when empty.
+	Link           string
+	ClaudeRestarts int
+	ClaudeLastExit string
+}
+
+// SetStatus records an agent's report in one statement. It leaves rows
+// that are being deleted or stopped alone, so a late report can't undo a
+// delete. It also leaves the row alone when a later agent has reported: a
+// report in flight when its container crashed must not overwrite the new
+// agent's (NOM-70).
+func (s *Store) SetStatus(ctx context.Context, id string, st AgentStatus) error {
+	q := s.setPhase(st.Phase, st.Message).
+		Set("signin_url = ?", st.SignInURL).
+		Set("signin_key = ?", st.SignInKey).
+		Set("claude_restarts = ?", st.ClaudeRestarts).
+		Set("claude_last_exit = ?", st.ClaudeLastExit).
+		Set("boot = ?", st.Boot)
+	if st.Link != "" {
+		q = q.Set("link = ?", st.Link)
+	}
+	_, err := q.Where("id = ? AND desired = ? AND boot <= ?", id, DesiredRunning, st.Boot).Exec(ctx)
 	return err
 }
 
-// SetImage records the project image the agent found in noma.yaml. Like
-// a link, it is not a phase change: updated_at stays, so the reconciler's
-// phase writes are not refused for it.
-func (s *Store) SetImage(ctx context.Context, id, image string) error {
+// SetImage records the project image the agent found in noma.yaml, with
+// SetStatus's guard on the agent's boot. It is not a phase change:
+// updated_at stays, so the reconciler's phase writes are not refused for it.
+func (s *Store) SetImage(ctx context.Context, id string, boot int64, image string) error {
 	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
 		Set("image = ?", image).
-		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
-	return err
-}
-
-// SetClaudeHealth records how often Claude restarted and how it last exited.
-func (s *Store) SetClaudeHealth(ctx context.Context, id string, restarts int, lastExit string) error {
-	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
-		Set("claude_restarts = ?", restarts).
-		Set("claude_last_exit = ?", lastExit).
-		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
+		Set("boot = ?", boot).
+		Where("id = ? AND desired = ? AND boot <= ?", id, DesiredRunning, boot).Exec(ctx)
 	return err
 }
 
@@ -261,24 +279,10 @@ func (s *Store) SetAgentSeen(ctx context.Context, id string) error {
 	return err
 }
 
-// SetLink records the workspace's Remote Control link.
-func (s *Store) SetLink(ctx context.Context, id, link string) error {
-	_, err := s.db.NewUpdate().Model((*Workspace)(nil)).
-		Set("link = ?", link).
-		Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
-	return err
-}
-
-// SetPhase records a workspace's phase. It leaves rows that are being
-// deleted alone, so a late update can't undo a delete.
-func (s *Store) SetPhase(ctx context.Context, id, phase, message string) error {
-	_, err := s.setPhase(phase, message).Where("id = ? AND desired = ?", id, DesiredRunning).Exec(ctx)
-	return err
-}
-
-// SetPhaseIfUnchanged is SetPhase for a row read earlier: it writes only if
-// nothing has changed the row's phase or desired state since, so the
-// reconciler never overwrites a phase it has not seen.
+// SetPhaseIfUnchanged records a phase the reconciler chose from a row it
+// read earlier. It writes only if nothing has changed the row's phase or
+// desired state since, so the reconciler never overwrites a phase it has
+// not seen.
 func (s *Store) SetPhaseIfUnchanged(ctx context.Context, read *Workspace, phase, message string) error {
 	_, err := s.setPhase(phase, message).
 		Where("id = ? AND desired = ? AND updated_at = ?", read.ID, read.Desired, read.UpdatedAt).Exec(ctx)

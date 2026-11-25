@@ -45,23 +45,14 @@ Each check has an expected result in `verify/lifecycle/checks`. The script exits
 | `stop-liveness` | `stop-liveness.cfg` | 1 | no | 1 | pass: `StoppedMeansStopped` (weak fairness, agent included) |
 | `start-liveness` | `start-liveness.cfg` | 1 | no | 1 | pass: `StartComesBack` (weak fairness, agent included) |
 | `setup` | `setup.cfg` | 1 | yes | 1 | pass: `TypeOK`, `ReadyMeansSetUp`, `AgentPhaseKept`, `ErrorClears` |
-| `setup-liveness` | `setup-liveness.cfg` | 1 | no | 0 | pass: `SettlesReadyOrError`, with no stops until `report-order` is fixed |
-| `report-order` | `report-order.cfg` | 1 | no | 1 | fail `SettlesReadyOrError`: the finding below |
+| `setup-liveness` | `setup-liveness.cfg` | 1 | no | 1 | pass: `SettlesReadyOrError`, with a crash and a stop |
+| `report-order` | `report-order.cfg` | 1 | no | 1 | pass: `SettlesReadyOrError`; a report from an older agent that lands late changes nothing (NOM-70) |
 
 Every config allows setup to fail and the list to change once, except `report-order`, which needs neither.
 
 A failing check prints the counterexample's steps by TLA+ action name. To read the path in plain words, run the pstack `/statechart` skill on `verify/lifecycle/WorkspaceLifecycle.tla` with that check's config. It shows the shortest path to each broken rule. When a check passes, `/statechart` draws a chart of how the workspace moves between states. Point it at the same TLC jar with the `TLA2TOOLS` environment variable.
 
 ## Known findings
-
-**A report from an older agent can land after a newer agent's, and the phase stays wrong for good** (`report-order`, found by NOM-55). `AgentServer.status` checks the token and then writes the phase. Its only guard is `desired = running`, so it can't tell which pod's agent sent the report. The path:
-
-1. The agent sends `sign-in`, and the server authenticates it.
-2. The container crashes before the write. Or the user stops and then starts the workspace.
-3. The new agent reports `starting-claude` and then `ready`.
-4. The old `sign-in` write lands last.
-
-The new agent has nothing more to report, so the CLI shows `sign-in` while Claude is ready. Proposed fix: each agent registers when it starts, and the server bumps a boot number on the row. Reports carry that number, and the phase write requires it to match. When the fix lands, model it, set `report-order` to `pass`, and give `setup-liveness` stops and crashes again.
 
 Found while modeling M3's design, before code: if `noma start` were accepted while the old pod is still stopping, that pod's agent (already `ready`) never reports again and the row stays `starting` for good (`AgentPhaseKept`: `ApiStop` then `ApiStart` with the pod still running). `ApiStart` therefore requires `phase = 'stopped'` (decision M3-25); the stop/start code (NOM-38) must keep that guard. A new finding is a bug in the code, not in the model. List it here with its path, and give its check the expected result `fail <Property>` in `verify/lifecycle/checks`. Do not weaken a property or the model to make it pass.
 
@@ -73,12 +64,13 @@ Coverage, with the model operators that stand for each piece of code:
 
 | Code | Model |
 | --- | --- |
-| `internal/store/store.go`: `SetPhase`, `SetPhaseIfUnchanged`, `MarkDeleted`, `DeleteWorkspace`, `CreateWorkspace`, `Workspaces`, `WithReconcileLock` | `SetPhase`, `SetPhaseIfUnchanged` (`changed` stands for `updated_at`), `ApiDelete`, `RecDeleteRow`, `ApiCreate`, `RecStartPass`, `RecLock`/`RecUnlock` |
+| `internal/store/store.go`: `SetStatus`, `SetPhaseIfUnchanged`, `MarkDeleted`, `DeleteWorkspace`, `CreateWorkspace`, `Workspaces`, `WithReconcileLock` | `AgentLand`, `SetPhaseIfUnchanged` (`changed` stands for `updated_at`), `ApiDelete`, `RecDeleteRow`, `ApiCreate`, `RecStartPass`, `RecLock`/`RecUnlock` |
 | `internal/server/server.go`: `createWorkspace`/`insertWorkspace`, `deleteWorkspace`, `stopWorkspace`, `startWorkspace` | `ApiCreate`, `ApiDelete`, `ApiStop`, `ApiStart` |
 | `internal/store/store.go`: `MarkStopped`, `MarkStarted`; `SetImage` (NOM-50) | `ApiStop`, `ApiStart`; `AgentLand`'s image branch |
 | `internal/reconcile/reconcile.go`: `Run`, `pass`, `ensure`, `reconcilerPhase`, `observe`, `setStarting`, `setPhase`, `remove`, `gone` | `RecLock` … `RecDeleteRow`, `ReconcilerPhase`, `RecWrite` |
-| `internal/server/agent.go`: `workspaceForToken`, `status` | `AgentSend` (auth read), `AgentLand` (`SetPhase`) |
+| `internal/server/agent.go`: `workspaceForToken`, `status` | `AgentSend` (auth read), `AgentLand` (one `SetStatus` or `SetImage`, guarded by `boot <= ?`) |
 | `internal/agent/agent.go`: `Run`, `setup`, `superviseClaude`, `report`; `signin.go`: `signIn`'s sign-in report | `StartReports`, `AgentSend` |
+| `internal/agent/boot.go`: `countBoot`, saved on the volume before the first report (NOM-70) | `inc` (`PodStart`, `PodRestart`), each report's `inc` |
 | `internal/reconcile/objects.go`: the pod's ServiceAccount, PVC claim and `HOME` on the volume; the StatefulSet's replicas (`replicas`) and image (NOM-50) | `PodCreate`, `PodRemove`, `PodStart`, `PVCFinalize`, `cloned`/`loggedIn`, `RecApplySTS` |
 | `internal/agent/image.go` (`useImage`, called from `agent.go`'s `Run`): the `noma.yaml` image report (NOM-50) | `StartReports`' `"image"` |
 | `noma.yaml` setup commands (NOM-61, not yet built): the `setup` report, the volume's record of the list's hash, the setup error | `StartReports`' `"setup"`, `AgentStartsSetup`, `AgentSetupFails`, `setupDone`, `ListChanged` |
@@ -128,7 +120,7 @@ Read the counterexample (with `/statechart`, or `VERBOSE=1`) and ask, step by st
 
 ## Scope and assumptions
 
-Verified: one workspace, all interleavings of the steps above. Bounds: at most 1 container crash (0 in `stale-error`, `rollout` and `setup-liveness`), 1 stop, 1 change to the setup list, and 1 reconciler unless a config says 2.
+Verified: one workspace, all interleavings of the steps above. Bounds: at most 1 container crash (0 in `stale-error` and `rollout`), 1 stop, 1 change to the setup list, and 1 reconciler unless a config says 2.
 
 The setup step (M3.5-12) was modeled before its code (NOM-55). NOM-61 adds its files to `covered.sha256` and checks the model against them.
 
@@ -139,12 +131,11 @@ Not covered:
 - several workspaces or owners, and name reuse;
 - the namespace and NetworkPolicy, which are per owner and never deleted;
 - removing `noma.yaml` from a repo on a project image: the agent keeps the project image and only logs it;
-- `SetSignIn` and `SetLink`, which the model folds into `AgentLand`'s `SetPhase` (each has the same `desired = running` guard);
 - the sign-in code relay (`server.signIn`, `AgentServer.Send`);
 - an image report from a pod already on the project image (the model's repo always names one project image);
 - Claude restarting inside a running pod, after a crash or for new credentials (NOM-49). Each restart reports `starting-claude` and then `ready` again, so the phase is still the agent's last report;
 - the agent's `error` reports other than setup's. The reconciler tells them from its own error by the message, so the agent must never report `could not create workspace objects`;
-- a container restart's stale phase: the row keeps the old agent's last report until the new agent's first one, for every phase;
+- a container restart's stale phase: the row keeps the old agent's last report until the new agent's first one, for every phase. Once the new agent has reported, the old agent's late reports change nothing;
 - `noma start` on a workspace whose setup failed. The CLI stops the workspace, waits for `stopped` and starts it, which the model's `ApiStop` and `ApiStart` already cover. NOM-61 must build it that way, and record the hash of the list it read at start;
 - two phase writes in the same microsecond, which leave `updated_at` equal, so `SetPhaseIfUnchanged` cannot tell them apart;
 - Postgres or Kubernetes losing writes;
