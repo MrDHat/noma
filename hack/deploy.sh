@@ -20,13 +20,20 @@ case "$arch" in
 esac
 
 if [ -n "${NOMA_RELEASE:-}" ]; then
-  # The release's images, by digest.
-  images="$(curl -fsSL "https://github.com/MrDHat/noma/releases/download/${NOMA_RELEASE}/images.txt")"
-  server_image="$(sed -n 's/^noma-server=//p' <<<"$images")"
-  workspace_image="$(sed -n 's/^noma-workspace=//p' <<<"$images")"
-  if [ -z "$server_image" ] || [ -z "$workspace_image" ]; then
-    echo "release ${NOMA_RELEASE} has no images.txt with noma-server and noma-workspace" >&2
-    exit 1
+  # The release's chart, which defaults to its images by digest. Releases
+  # before the chart was published (v0.3.x) have only images.txt.
+  chart="oci://ghcr.io/mrdhat/charts/noma"
+  chart_version="${NOMA_RELEASE#v}"
+  if ! helm show chart "$chart" --version "$chart_version" >/dev/null 2>&1; then
+    chart="${ROOT}/charts/noma"
+    chart_version=""
+    images="$(curl -fsSL "https://github.com/MrDHat/noma/releases/download/${NOMA_RELEASE}/images.txt")"
+    server_image="$(sed -n 's/^noma-server=//p' <<<"$images")"
+    workspace_image="$(sed -n 's/^noma-workspace=//p' <<<"$images")"
+    if [ -z "$server_image" ] || [ -z "$workspace_image" ]; then
+      echo "release ${NOMA_RELEASE} has neither a chart nor an images.txt with noma-server and noma-workspace" >&2
+      exit 1
+    fi
   fi
   CLAUDE=real
 else
@@ -76,8 +83,13 @@ else
     --set workspace.fakeClaude=true)
 fi
 if [ -n "${NOMA_RELEASE:-}" ]; then
-  values+=(--set "server.image=${server_image}" --set server.pullPolicy=IfNotPresent
-    --set "workspace.image=${workspace_image}")
+  values+=(--set server.pullPolicy=IfNotPresent)
+  if [ -n "${server_image:-}" ]; then
+    values+=(--set "server.image=${server_image}" --set "workspace.image=${workspace_image}")
+  fi
+else
+  chart="${ROOT}/charts/noma"
+  chart_version=""
 fi
 
 # Clusters made before the chart (M3.5-14) have the same objects, applied
@@ -97,7 +109,7 @@ fi
 
 # --force-conflicts: the chart owns these objects, including fields kubectl
 # set on clusters made before it.
-if ! helm --kube-context "$PROFILE" upgrade --install noma "${ROOT}/charts/noma" \
+if ! helm --kube-context "$PROFILE" upgrade --install noma "$chart" ${chart_version:+--version "$chart_version"} \
   -n noma-system --create-namespace "${values[@]}" --force-conflicts --wait --timeout 5m; then
   # The preflight check's log names what the cluster is missing.
   kc -n noma-system logs job/noma-preflight 2>/dev/null || true
