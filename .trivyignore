@@ -9,3 +9,8 @@ AWS-0041
 # M3.5-6: nodes sit in public subnets with no inbound rules and no NAT
 # gateway. Private subnets and NAT come with M4.
 AWS-0164
+
+# M3.5-28: noma-server writes each user's NetworkPolicy in a namespace it
+# creates on demand, so its ClusterRole must manage NetworkPolicies in every
+# namespace. Admission rules that pin it to noma-u-* namespaces come in M5.
+KSV-0056
