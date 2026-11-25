@@ -6,8 +6,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 
@@ -67,15 +67,18 @@ func agentEndpoint(t *testing.T) string {
 	return strings.Replace(c.BaseURL, "http://", "https://", 1)
 }
 
-// agentHTTP trusts the dev CA, like the workspace image does.
+// agentHTTP trusts the install's agent CA, like workspaces do.
 func agentHTTP(t *testing.T) *http.Client {
 	t.Helper()
-	pem, err := os.ReadFile("../../.dev/certs/ca.crt")
+	b64 := kubectl(t, "-n", "noma-system", "get", "secret", "noma-server-tls", "-o", "jsonpath={.data.ca\\.crt}")
+	pem, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
 	if err != nil {
 		t.Fatal(err)
 	}
 	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(pem)
+	if !pool.AppendCertsFromPEM(pem) {
+		t.Fatal("noma-server-tls has no CA certificate")
+	}
 	return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
 		RootCAs: pool, ServerName: "noma-server.noma-system.svc",
 	}}}

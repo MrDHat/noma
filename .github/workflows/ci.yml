@@ -80,6 +80,27 @@ jobs:
       - run: make verify-teardown
       - run: hack/model-sync.sh teardown check
 
+  # The Noma chart lints and renders with each values file (M3.5-24).
+  chart:
+    runs-on: ubuntu-latest
+    env:
+      HELM_VERSION: v4.2.0
+      HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install helm
+        run: |
+          curl -fsSLo helm.tgz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          echo "${HELM_SHA256}  helm.tgz" | sha256sum -c -
+          tar -xzf helm.tgz linux-amd64/helm
+          sudo install linux-amd64/helm /usr/local/bin/
+          rm -rf helm.tgz linux-amd64
+      - run: helm lint --strict charts/noma
+      - run: helm lint --strict charts/noma -f charts/noma/values-minikube.yaml
+      - run: helm template noma charts/noma -n noma-system >/dev/null
+
   e2e:
     runs-on: ubuntu-latest
     env:
@@ -87,6 +108,8 @@ jobs:
       MINIKUBE_SHA256: 099477eaf248bcb5bcea8ce78a2898e93ac01461c35189da1848c3de82ecd22e
       KUBECTL_VERSION: v1.35.1
       KUBECTL_SHA256: 36e2f4ac66259232341dd7866952d64a958846470f6a9a6a813b9117bd965207
+      HELM_VERSION: v4.2.0
+      HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096
       # CI can't sign in to Claude, so workspaces get a fake claude binary.
       NOMA_CLAUDE: fake
     steps:
@@ -96,8 +119,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Install minikube and kubectl
+      - name: Install minikube, kubectl and helm
         run: |
+          curl -fsSLo helm.tgz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          echo "${HELM_SHA256}  helm.tgz" | sha256sum -c -
+          tar -xzf helm.tgz linux-amd64/helm
+          sudo install linux-amd64/helm /usr/local/bin/
+          rm -rf helm.tgz linux-amd64
           curl -fsSLo minikube "https://github.com/kubernetes/minikube/releases/download/${MINIKUBE_VERSION}/minikube-linux-amd64"
           echo "${MINIKUBE_SHA256}  minikube" | sha256sum -c -
           curl -fsSLo kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
