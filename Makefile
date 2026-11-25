@@ -3,7 +3,7 @@ LDFLAGS := -s -w -X github.com/MrDHat/noma/internal/version.Version=$(VERSION)
 BINARIES := noma noma-server noma-agent
 BIN ?= bin
 
-.PHONY: build test lint fmt dev-up daily-up dev-down deploy e2e demo-real aws-up aws-down verify verify-lifecycle verify-credentials verify-teardown check-claude-login
+.PHONY: build test lint fmt dev-up daily-up dev-down deploy e2e demo-real aws-up aws-down demo-aws verify verify-lifecycle verify-credentials verify-teardown check-claude-login
 
 build:
 	@mkdir -p $(BIN)
@@ -47,6 +47,11 @@ aws-up:
 # Takes down everything aws-up made; fails while workspaces exist.
 aws-down:
 	hack/aws-down.sh
+
+# The M3.5 acceptance demo on EKS, from aws-up to aws-down. Needs you and
+# DEMO_RELEASE; costs money while it runs.
+demo-aws:
+	hack/demo-aws.sh
 
 verify: verify-lifecycle verify-credentials verify-teardown
 
