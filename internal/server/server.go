@@ -52,6 +52,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/secrets", s.authed(s.listSecrets))
 	mux.Handle("PUT /v1/secrets/{name}", s.authed(s.putSecret))
 	mux.Handle("DELETE /v1/secrets/{name}", s.authed(s.deleteSecret))
+	mux.Handle("POST /v1/install/close", s.authed(s.closeInstall))
 	return mux
 }
 
@@ -94,6 +95,10 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request, user st
 	ws, err := s.insertWorkspace(r.Context(), user, req)
 	if errors.Is(err, store.ErrNameTaken) {
 		writeError(w, http.StatusConflict, fmt.Sprintf("workspace %q already exists", req.Name))
+		return
+	}
+	if errors.Is(err, store.ErrClosing) {
+		writeError(w, http.StatusConflict, "this Noma install is being uninstalled")
 		return
 	}
 	if err != nil {
@@ -319,4 +324,20 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func internalError(w http.ResponseWriter, err error) {
 	slog.Error("request failed", "err", err)
 	writeError(w, http.StatusInternalServerError, "internal error")
+}
+
+// closeInstall is what the chart's pre-delete hook calls: helm uninstall
+// fails while any workspace exists, and once it passes no workspace can be
+// created (M3.5-18, M3.5-19).
+func (s *Server) closeInstall(w http.ResponseWriter, r *http.Request, _ string) {
+	left, err := s.Store.CloseInstall(r.Context())
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if left > 0 {
+		writeError(w, http.StatusConflict, fmt.Sprintf("%d workspaces still exist; remove them with noma rm first", left))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

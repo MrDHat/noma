@@ -7,7 +7,7 @@ description: Model-check that taking a Noma install down leaves nothing orphaned
 
 `make aws-down` runs `helm uninstall`. The chart's pre-delete hook asks noma-server to close: in one transaction it refuses while any workspace row exists, and otherwise marks the install closing, so every later create is refused. aws-down then deletes the user namespaces, waits for their volumes to go, and destroys the cluster. `noma up`, `noma rm`, the reconciler, the hook, the CSI driver and aws-down all act at once. `verify/teardown/Teardown.tla` models one user with two workspaces, Postgres at READ COMMITTED, and TLC checks every order of their steps.
 
-The model came first: it describes the design that NOM-60 (closing state) and NOM-67 (aws-down) build. Until they land, the code has no close, and the model's create and teardown steps describe the design rather than the code.
+The model came first: it describes the design that NOM-60 (closing state) and NOM-67 (aws-down) build. The close and the locked create are in the code (NOM-60); until NOM-67 lands, the teardown steps after `helm uninstall` describe the design rather than the code.
 
 ## What it promises
 
@@ -41,7 +41,7 @@ Read every result with the pstack `/statechart` skill on `verify/teardown/Teardo
 
 ## Known findings
 
-None for the design. The code has no close yet (NOM-60).
+None.
 
 A new finding is a bug in the code, not in the model. List it here with its path, and set its check's expected result to `fail <Property>` in `verify/teardown/checks`. Do not weaken the property or the model to make it pass. When a fix lands, mirror it in the model and set the check back.
 
@@ -54,8 +54,8 @@ A new finding is a bug in the code, not in the model. List it here with its path
 | `internal/reconcile/reconcile.go`: `pass` reads `store.Workspaces` | `ReadRows` |
 | `internal/reconcile/reconcile.go`: `ensure` | `Ensure` |
 | `internal/reconcile/reconcile.go`: `remove`, `gone`; `internal/store/store.go`: `DeleteWorkspace` | `Remove` |
-| The close endpoint (NOM-60) | `CloseBegin`, `CloseCount`, `CloseCommit` |
-| The chart's pre-delete hook, `make aws-down` (NOM-67) | `Uninstall`, `ServerGone`, `UninstallDone`, `Sweep`, `SweepDone`, `SweepTimeout`, `Destroy` |
+| `internal/server/server.go`: `closeInstall`; `internal/store/store.go`: `CloseInstall` | `CloseBegin`, `CloseCount`, `CloseCommit` |
+| The chart's pre-delete hook (`charts/noma/templates/uninstall-guard.yaml`), `make aws-down` (NOM-67) | `Uninstall`, `ServerGone`, `UninstallDone`, `Sweep`, `SweepDone`, `SweepTimeout`, `Destroy` |
 
 A change touches the verification when it:
 
@@ -66,7 +66,7 @@ A change touches the verification when it:
 
 ## Keeping it in step (CI enforces this)
 
-`verify/teardown/covered.sha256` holds the SHA-256 of every covered file, as of the last time someone confirmed the model matches them. CI's `teardown-model` job runs `make verify-teardown` and `hack/model-sync.sh teardown check`, which fails when a covered file changed since. Read the diff it names, update the model if needed, run `make verify-teardown`, and only then run `hack/model-sync.sh teardown update` and commit `covered.sha256`. NOM-60 and NOM-67 add their files to it.
+`verify/teardown/covered.sha256` holds the SHA-256 of every covered file, as of the last time someone confirmed the model matches them. CI's `teardown-model` job runs `make verify-teardown` and `hack/model-sync.sh teardown check`, which fails when a covered file changed since. Read the diff it names, update the model if needed, run `make verify-teardown`, and only then run `hack/model-sync.sh teardown update` and commit `covered.sha256`. NOM-67 adds its files to it.
 
 These files are covered by the lifecycle model as well; a change there may need both skills.
 

@@ -134,6 +134,11 @@ jobs:
           rm minikube kubectl
       - run: make dev-up
       - run: make e2e
+      # Last, because it ends the install: helm uninstall's guard passes once
+      # no workspaces are left, and creates are refused from then on.
+      - run: go test -tags e2e -count=1 -v -run TestUninstallClosesTheInstall ./test/e2e/
+        env:
+          NOMA_E2E_UNINSTALL: "1"
       - name: Cluster state on failure
         if: failure()
         run: |

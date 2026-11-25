@@ -1,0 +1,45 @@
+{{- /* Before helm uninstall deletes anything, ask noma-server to close
+the install (M3.5-18, M3.5-19): the uninstall fails while any workspace
+exists, so no workspace volume is orphaned, and once it passes no
+workspace can be created. The failed Job stays, so its log says why. */}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-uninstall-guard
+  labels: {{- include "noma.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: noma
+        app.kubernetes.io/component: uninstall-guard
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: guard
+          image: {{ .Values.server.image }}
+          imagePullPolicy: {{ .Values.server.pullPolicy }}
+          args: [close-install]
+          env:
+            - name: NOMA_API_URL
+              value: http://noma-server.{{ .Release.Namespace }}.svc:8080
+            - name: NOMA_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: noma-server
+                  key: admin-token
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
