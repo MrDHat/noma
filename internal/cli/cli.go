@@ -232,25 +232,30 @@ func stop(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	defer c.Close()
-	if err := c.StopWorkspace(ctx, args[0]); err != nil {
+	return stopAndWait(ctx, c, args[0], stdout)
+}
+
+// stopAndWait stops a workspace and waits until it is stopped. The server
+// removes the pod and keeps the volume.
+func stopAndWait(ctx context.Context, c *Client, name string, stdout io.Writer) error {
+	if err := c.StopWorkspace(ctx, name); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "stopping workspace %s…\n", args[0])
-	// The server removes the pod and keeps the volume.
+	fmt.Fprintf(stdout, "stopping workspace %s…\n", name)
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	for {
-		ws, err := c.Workspace(ctx, args[0])
+		ws, err := c.Workspace(ctx, name)
 		if err != nil {
 			return err
 		}
 		if ws.Phase == api.PhaseStopped {
-			fmt.Fprintf(stdout, "workspace %s stopped; its files are kept\n", args[0])
+			fmt.Fprintf(stdout, "workspace %s stopped; its files are kept\n", name)
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("workspace %s is still stopping", args[0])
+			return fmt.Errorf("workspace %s is still stopping", name)
 		case <-time.After(pollInterval):
 		}
 	}
@@ -265,6 +270,16 @@ func start(ctx context.Context, args []string, stdin *lines, stdout io.Writer) e
 		return err
 	}
 	defer c.Close()
+	// A workspace whose setup failed is still running. Starting it again
+	// means a new agent, which resumes setup from the failed command, so
+	// stop it first (M3.5-25).
+	if ws, err := c.Workspace(ctx, args[0]); err == nil &&
+		ws.Phase == api.PhaseError && strings.HasPrefix(ws.Message, api.SetupFailed) {
+		fmt.Fprintf(stdout, "workspace %s failed setup; restarting it to try again\n", args[0])
+		if err := stopAndWait(ctx, c, args[0], stdout); err != nil {
+			return err
+		}
+	}
 	if err := c.StartWorkspace(ctx, args[0]); err != nil {
 		return err
 	}
