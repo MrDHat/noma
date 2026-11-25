@@ -1,7 +1,8 @@
 {{- /* Before every install and upgrade, check the cluster has what Noma
-needs (M3.5-15): the RuntimeClass, the StorageClasses, and a pod that
-really runs in gVisor. The chart never creates these; a failed check
-stops the install and the Job's log names what is missing. */}}
+needs (M3.5-15): the RuntimeClass, the StorageClasses, a pod that really
+runs in gVisor, and a NetworkPolicy that really cuts a pod off. The chart
+never creates the cluster's parts; a failed check stops the install and
+the Job's log names what is missing. */}}
 {{- if .Values.preflight.enabled }}
 {{- $name := printf "%s-preflight" .Release.Name }}
 apiVersion: v1
@@ -59,10 +60,14 @@ metadata:
     helm.sh/hook-weight: "-10"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 rules:
-  # The sandbox check pod.
+  # The sandbox and NetworkPolicy check pods.
   - apiGroups: [""]
     resources: [pods]
     verbs: [create, get, delete]
+  # The policy that denies the NetworkPolicy check pod all egress.
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
