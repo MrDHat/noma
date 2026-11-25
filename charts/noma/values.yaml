@@ -21,6 +21,9 @@ workspace:
   # Each workspace volume's size, and its StorageClass ("" is the cluster's
   # default). Both apply to new workspaces only (M3.5-23).
   disk: 20Gi
+  # The gVisor RuntimeClass workspaces run under. The cluster provides it;
+  # the preflight check fails the install without it (M3.5-15).
+  runtimeClassName: gvisor
   storageClassName: ""
   # Use the fake claude binary baked into the workspace image (tests only).
   fakeClaude: false
@@ -45,3 +48,7 @@ postgres:
 # exist already, for example when rendering without a cluster.
 secrets:
   create: true
+
+# Check the cluster has what Noma needs before every install and upgrade.
+preflight:
+  enabled: true

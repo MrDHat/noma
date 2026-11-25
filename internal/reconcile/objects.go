@@ -25,7 +25,6 @@ const (
 // Workspace pod settings for M2.
 const (
 	workspaceUID  = 1000
-	runtimeClass  = "gvisor"
 	tokenPath     = "/var/run/secrets/noma"
 	tokenLifetime = 3600
 )
@@ -39,6 +38,8 @@ type Config struct {
 	// Resources are each workspace container's requests and limits
 	// (M3.5-7).
 	Resources corev1.ResourceRequirements
+	// RuntimeClass is the gVisor RuntimeClass workspace pods run under.
+	RuntimeClass string
 	// DiskSize is each workspace volume's size (M3.5-23).
 	DiskSize resource.Quantity
 	// StorageClass is the workspace volumes' StorageClass; "" is the
@@ -225,7 +226,7 @@ func statefulSet(ws *store.Workspace, cfg Config) *appsv1ac.StatefulSetApplyConf
 			WithTemplate(corev1ac.PodTemplateSpec().
 				WithLabels(workspaceLabels(ws)).
 				WithSpec(corev1ac.PodSpec().
-					WithRuntimeClassName(runtimeClass).
+					WithRuntimeClassName(cfg.RuntimeClass).
 					WithServiceAccountName(ws.ID).
 					WithAutomountServiceAccountToken(false).
 					WithEnableServiceLinks(false).
