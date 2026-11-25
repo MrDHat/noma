@@ -58,6 +58,7 @@ func (a *AgentServer) Handler() http.Handler {
 	mux.Handle("GET /agent/v1/messages", a.authed(a.messages))
 	mux.Handle("GET /agent/v1/credentials", a.authed(a.credentials))
 	mux.Handle("POST /agent/v1/account", a.authed(a.account))
+	mux.Handle("GET /agent/v1/claude-setup", a.authed(a.claudeSetup))
 	if a.FakeClaude {
 		mux.HandleFunc("GET /fake/claude/profile", fakeClaudeProfile)
 	}
