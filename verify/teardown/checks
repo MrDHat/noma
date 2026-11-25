@@ -1,0 +1,8 @@
+# name|config|expected ("pass", or "fail <Property>" for a known finding)
+teardown|teardown.cfg|pass
+no-wait|no-wait.cfg|pass
+# Why the design needs the lock: without it the close and a create race
+# at READ COMMITTED, even in one transaction each.
+no-lock|no-lock.cfg|fail NoWorkspaceAfterClose
+# ...and without --wait as well, the workspace's volume outlives the cluster.
+no-lock-no-wait|no-lock-no-wait.cfg|fail NothingOrphaned
