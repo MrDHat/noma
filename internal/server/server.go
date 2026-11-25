@@ -49,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/workspaces/{name}/stop", s.authed(s.stopWorkspace))
 	mux.Handle("POST /v1/workspaces/{name}/start", s.authed(s.startWorkspace))
 	mux.Handle("POST /v1/workspaces/{name}/signin", s.authed(s.signIn))
+	mux.Handle("PUT /v1/claude-setup", s.authed(s.putClaudeSetup))
 	mux.Handle("GET /v1/secrets", s.authed(s.listSecrets))
 	mux.Handle("PUT /v1/secrets/{name}", s.authed(s.putSecret))
 	mux.Handle("DELETE /v1/secrets/{name}", s.authed(s.deleteSecret))
