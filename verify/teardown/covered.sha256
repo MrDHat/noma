@@ -2,3 +2,4 @@
 8119eae001b2fa150ba6fb050427120ad889abc9bff0ae343c28f3c38cb2f737  internal/store/store.go
 d4adad58b23c1920c7c681e52ea2887b92aa4bd0b2b7dc45ff97a1e0a7470def  internal/reconcile/reconcile.go
 415771bb4014be86b753a8a7bf24754fc31e812b5658978e5e9728a9493c8504  charts/noma/templates/uninstall-guard.yaml
+9596a9847c6c8e9ba7a7ef2ebcc269907fa1653af9bfa73c1e735fca5d6a9706  hack/aws-down.sh

@@ -24,3 +24,13 @@ terraform -chdir=infra/aws apply
 
 Variables: `region`, `profile`, `cluster_name`, `kubernetes_version`,
 `node_instance_type` (t4g.large), `node_count` (1), `node_disk_size` (50 GiB).
+
+## Taking it down
+
+`make aws-down` removes everything `make aws-up` made, so nothing is left to
+bill. It runs `helm uninstall --wait`, which fails while any workspace
+exists (remove them with `noma rm` first), deletes Noma's namespaces and
+waits for their volumes to go, runs `terraform destroy`, and fails if any
+EBS volume tagged with the cluster is left. If the volumes don't go within
+ten minutes it stops and keeps the cluster, so you can look. The state
+bucket stays.
